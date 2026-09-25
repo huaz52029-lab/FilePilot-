@@ -7,6 +7,7 @@ import sys
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.core.common.constants import (
+    APP_HOMEPAGE,
     APP_NAME,
     APP_VERSION,
     SETTINGS_ORG,
@@ -258,6 +259,34 @@ def self_test(
                 app.processEvents()
             if shots is not None:
                 window.grab().save(str(shots / f"{page_id.value}.png"))
+
+        # 项目地址验证：真实点击“设置 → 打开项目地址”，拦截浏览器打开的实际地址
+        from PySide6.QtGui import QDesktopServices
+
+        captured_urls: list[str] = []
+        original_open_url = QDesktopServices.openUrl
+        QDesktopServices.openUrl = staticmethod(  # type: ignore[assignment]
+            lambda url: (captured_urls.append(url.toString()), True)[1]
+        )
+        try:
+            settings_page = window.pages[PageId.SETTINGS]
+            settings_page.on_show()  # type: ignore[attr-defined]
+            app.processEvents()
+            shown_address = settings_page.project_address_label.text()  # type: ignore[attr-defined]
+            settings_page._open_project_page()  # noqa: SLF001 - 自检内部调用
+            app.processEvents()
+        finally:
+            QDesktopServices.openUrl = original_open_url  # type: ignore[assignment]
+
+        if shown_address != APP_HOMEPAGE or captured_urls != [APP_HOMEPAGE]:
+            logger.error(
+                "自检失败：项目地址不一致（页面显示 %s，实际打开 %s，期望 %s）",
+                shown_address,
+                captured_urls,
+                APP_HOMEPAGE,
+            )
+            return 1
+        logger.info("项目地址自检通过：设置页“打开项目地址” → %s", APP_HOMEPAGE)
 
         import time
 
