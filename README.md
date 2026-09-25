@@ -16,8 +16,33 @@
 
 ---
 
+## 下载
+
+普通 Windows 用户无需安装 Python 或任何依赖，直接下载可执行文件即可：
+
+> 前往 **[GitHub Releases](https://github.com/huaz52029-lab/FilePilot-/releases/latest)** 下载最新 Windows 版本。
+
+```text
+Windows x64
+    ↓
+FilePilot-v0.1.0-Windows-x64.exe
+```
+
+| 文件 | 说明 |
+| --- | --- |
+| [FilePilot-v0.1.0-Windows-x64.exe](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.0/FilePilot-v0.1.0-Windows-x64.exe) | 单文件可执行程序（推荐，双击即用） |
+| [FilePilot-v0.1.0-Windows-x64.zip](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.0/FilePilot-v0.1.0-Windows-x64.zip) | 便携压缩包（含 README 与 LICENSE） |
+
+- 系统要求：Windows 10 / 11（x64）
+- 数据库、配置与日志写入 `%APPDATA%\FilePilot`，不会写入程序所在目录
+- 首次运行若出现 SmartScreen 提示，可选择“更多信息 → 仍要运行”（未签名开源程序的常见提示）
+- 全部版本：[Releases](https://github.com/huaz52029-lab/FilePilot-/releases)
+
+---
+
 ## 目录
 
+- [下载](#下载)
 - [Features（核心功能）](#features核心功能)
 - [Screenshots（界面截图）](#screenshots界面截图)
 - [快速开始](#快速开始)
@@ -125,6 +150,14 @@ python -m app
 ```powershell
 python build.py
 dist\FilePilot.exe
+```
+
+发布版本使用带版本号的产物名（同时生成便携压缩包）：
+
+```powershell
+python build.py --release --zip
+# dist\FilePilot-v0.1.0-Windows-x64.exe
+# dist\FilePilot-v0.1.0-Windows-x64.zip
 ```
 
 ---

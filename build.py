@@ -3,6 +3,8 @@
 用法::
 
     python build.py                # 单文件模式 → dist/FilePilot.exe
+    python build.py --release      # 发布命名 → dist/FilePilot-v0.1.0-Windows-x64.exe
+    python build.py --release --zip  # 额外生成便携版压缩包
     python build.py --onedir       # 目录模式（启动更快）→ dist/FilePilot/FilePilot.exe
     python build.py --console      # 保留控制台（排查启动问题）
     python build.py --skip-icon    # 跳过图标生成
@@ -22,6 +24,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -31,13 +34,21 @@ RESOURCE_DIR = REPO_ROOT / "app" / "resources"
 APP_NAME = "FilePilot"
 
 
-def parse_args(argv: list[str]) -> dict[str, bool]:
+def parse_args(argv: list[str]) -> dict[str, object]:
     """解析命令行参数。"""
+    name = ""
+    if "--name" in argv:
+        index = argv.index("--name")
+        if index + 1 < len(argv):
+            name = argv[index + 1]
     return {
         "onedir": "--onedir" in argv,
         "console": "--console" in argv,
         "skip_icon": "--skip-icon" in argv,
         "no_clean": "--no-clean" in argv,
+        "release": "--release" in argv,
+        "zip": "--zip" in argv,
+        "name": name,
     }
 
 
@@ -98,7 +109,24 @@ def ensure_icon() -> Path | None:
         return None
 
 
-def write_version_file() -> Path:
+def resolve_exe_name(options: dict[str, object]) -> str:
+    """计算可执行文件名。
+
+    * ``--name``      显式指定；
+    * ``--release``   使用发布命名 ``FilePilot-v<版本>-Windows-x64``；
+    * 默认            ``FilePilot``。
+    """
+    explicit = str(options.get("name") or "").strip()
+    if explicit:
+        return explicit.removesuffix(".exe")
+    if options.get("release"):
+        from app.core.common.constants import APP_VERSION
+
+        return f"{APP_NAME}-v{APP_VERSION}-Windows-x64"
+    return APP_NAME
+
+
+def write_version_file(exe_name: str) -> Path:
     """生成 PyInstaller 使用的版本资源文件。"""
     sys.path.insert(0, str(REPO_ROOT))
     from app.core.common.constants import APP_AUTHOR, APP_HOMEPAGE, APP_VERSION
@@ -127,7 +155,7 @@ VSVersionInfo(
           StringStruct('FileDescription', 'FilePilot 文件管理与智能下载工具'),
           StringStruct('FileVersion', '{APP_VERSION}'),
           StringStruct('InternalName', '{APP_NAME}'),
-          StringStruct('OriginalFilename', '{APP_NAME}.exe'),
+          StringStruct('OriginalFilename', '{exe_name}.exe'),
           StringStruct('ProductName', '{APP_NAME}'),
           StringStruct('ProductVersion', '{APP_VERSION}'),
           StringStruct('LegalCopyright', 'MIT License'),
@@ -145,14 +173,27 @@ VSVersionInfo(
     return path
 
 
-def build(options: dict[str, bool]) -> int:
+def make_zip(exe_path: Path) -> Path:
+    """生成便携版压缩包（可执行文件 + README + LICENSE）。"""
+    archive = exe_path.with_suffix(".zip")
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
+        bundle.write(exe_path, exe_path.name)
+        for extra in ("README.md", "LICENSE"):
+            source = REPO_ROOT / extra
+            if source.exists():
+                bundle.write(source, extra)
+    return archive
+
+
+def build(options: dict[str, object]) -> int:
     """执行打包。"""
     ensure_dependencies()
     icon = None if options["skip_icon"] else ensure_icon()
-    version_file = write_version_file()
+    exe_name = resolve_exe_name(options)
+    version_file = write_version_file(exe_name)
 
     if not options["no_clean"]:
-        for directory in (REPO_ROOT / "build" / APP_NAME, REPO_ROOT / "dist"):
+        for directory in (REPO_ROOT / "build" / exe_name, REPO_ROOT / "dist"):
             if directory.exists():
                 shutil.rmtree(directory, ignore_errors=True)
 
@@ -162,7 +203,7 @@ def build(options: dict[str, bool]) -> int:
         "PyInstaller",
         "--noconfirm",
         "--name",
-        APP_NAME,
+        exe_name,
         "--add-data",
         f"{RESOURCE_DIR}{os.pathsep}app/resources",
         "--version-file",
@@ -183,14 +224,17 @@ def build(options: dict[str, bool]) -> int:
         return result.returncode
 
     target = (
-        REPO_ROOT / "dist" / APP_NAME / f"{APP_NAME}.exe"
+        REPO_ROOT / "dist" / exe_name / f"{exe_name}.exe"
         if options["onedir"]
-        else REPO_ROOT / "dist" / f"{APP_NAME}.exe"
+        else REPO_ROOT / "dist" / f"{exe_name}.exe"
     )
     if target.exists():
         size_mb = target.stat().st_size / 1024 / 1024
         print(f"\n构建完成：{target}（{size_mb:.1f} MB）")
-        print("可执行自检：dist\\FilePilot.exe --self-test")
+        if options.get("zip") and not options["onedir"]:
+            archive = make_zip(target)
+            print(f"便携压缩包：{archive}（{archive.stat().st_size / 1024 / 1024:.1f} MB）")
+        print(f"可执行自检：dist\\{target.name} --self-test")
     else:  # pragma: no cover - 构建产物缺失
         print("未找到打包产物，请检查 PyInstaller 输出。")
         return 1
