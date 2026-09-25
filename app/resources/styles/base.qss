@@ -1,0 +1,687 @@
+/* FilePilot 基础样式模板（Windows 11 风格）
+ *
+ * 该文件包含所有主题共享的控件样式，使用 string.Template 的占位符语法。
+ * 具体配色由 app/ui/theme.py 注入，主题特有覆盖写在 dark.qss 与 light.qss。
+ */
+
+QWidget {
+    color: $text;
+    font-size: 13px;
+}
+
+QMainWindow, QWidget#Central, QStackedWidget {
+    background-color: $window_bg;
+}
+
+QDialog {
+    background-color: $window_bg;
+}
+
+QScrollArea, QScrollArea > QWidget > QWidget, QWidget#PageScroll, QWidget#PageScrollContent {
+    background: transparent;
+    border: none;
+}
+
+/* ------------------------- 标题栏 / 状态栏 / 侧边栏 ------------------------- */
+
+QWidget#TitleBar {
+    background-color: $titlebar_bg;
+    border-bottom: 1px solid $divider;
+}
+
+QWidget#StatusBar {
+    background-color: $titlebar_bg;
+    border-top: 1px solid $divider;
+}
+
+QWidget#Sidebar {
+    background-color: $sidebar_bg;
+    border-right: 1px solid $divider;
+}
+
+QFrame#Divider {
+    background-color: $divider;
+}
+
+/* --------------------------------- 文本 --------------------------------- */
+
+QLabel[role="page-title"] {
+    font-size: 22px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="page-subtitle"] {
+    font-size: 13px;
+    color: $text_secondary;
+}
+
+QLabel[role="section-title"] {
+    font-size: 16px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="section-subtitle"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="stat-value"] {
+    font-size: 26px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="stat-value-small"] {
+    font-size: 18px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="stat-title"] {
+    font-size: 13px;
+    color: $text_secondary;
+}
+
+QLabel[role="stat-caption"] {
+    font-size: 11px;
+    color: $text_muted;
+}
+
+QLabel[role="stat-unit"] {
+    font-size: 13px;
+    color: $text_secondary;
+    padding-bottom: 4px;
+}
+
+QLabel[role="item-title"] {
+    font-size: 14px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="item-subtitle"] {
+    font-size: 12px;
+    color: $text_secondary;
+}
+
+QLabel[role="item-meta"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="item-percent"] {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text_secondary;
+}
+
+QLabel[role="item-notice"] {
+    font-size: 12px;
+    color: $warning;
+}
+
+QLabel[role="item-error"] {
+    font-size: 12px;
+    color: $error;
+}
+
+QLabel[role="hint"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="detail-label"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="detail-value"] {
+    font-size: 13px;
+    color: $text;
+}
+
+QLabel[role="detail-note"] {
+    font-size: 12px;
+    color: $text_secondary;
+}
+
+QLabel[role="form-title"] {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="form-description"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="brand-title"] {
+    font-size: 15px;
+    font-weight: 700;
+    color: $text;
+}
+
+QLabel[role="brand-subtitle"] {
+    font-size: 11px;
+    color: $text_muted;
+}
+
+QLabel[role="sidebar-footer"] {
+    font-size: 11px;
+    color: $text_muted;
+    padding: 6px;
+}
+
+QLabel[role="app-title"] {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text_secondary;
+}
+
+QLabel[role="status-text"] {
+    font-size: 12px;
+    color: $text_secondary;
+}
+
+QLabel[role="status-muted"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="empty-title"] {
+    font-size: 15px;
+    font-weight: 600;
+    color: $text_secondary;
+}
+
+QLabel[role="empty-description"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="dialog-title"] {
+    font-size: 17px;
+    font-weight: 600;
+    color: $text;
+}
+
+QLabel[role="dialog-subtitle"] {
+    font-size: 12px;
+    color: $text_muted;
+}
+
+QLabel[role="dialog-message"] {
+    font-size: 13px;
+    color: $text_secondary;
+}
+
+/* --------------------------------- 卡片 --------------------------------- */
+
+QFrame#Card {
+    background-color: $card_bg;
+    border: 1px solid $card_border;
+    border-radius: 12px;
+}
+
+QFrame#Card[hoverable="true"]:hover {
+    background-color: $card_bg_hover;
+}
+
+QLabel#StatIcon {
+    border-radius: 10px;
+    background-color: $accent_soft;
+}
+
+QLabel#StatIcon[tone="success"] {
+    background-color: $success_soft;
+}
+
+QLabel#StatIcon[tone="warning"] {
+    background-color: $warning_soft;
+}
+
+QLabel#StatIcon[tone="error"] {
+    background-color: $error_soft;
+}
+
+QLabel#StatIcon[tone="info"] {
+    background-color: $accent_soft;
+}
+
+QLabel#StatIcon[tone="neutral"] {
+    background-color: $hover_bg;
+}
+
+/* --------------------------------- 徽标 --------------------------------- */
+
+QLabel#Badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 9px;
+    color: $text_secondary;
+    background-color: $hover_bg;
+    border: 1px solid $card_border;
+}
+
+QLabel#Badge[tone="accent"] {
+    color: $accent;
+    background-color: $accent_soft;
+    border-color: $accent_soft;
+}
+
+QLabel#Badge[tone="success"] {
+    color: $success;
+    background-color: $success_soft;
+    border-color: $success_soft;
+}
+
+QLabel#Badge[tone="warning"] {
+    color: $warning;
+    background-color: $warning_soft;
+    border-color: $warning_soft;
+}
+
+QLabel#Badge[tone="error"] {
+    color: $error;
+    background-color: $error_soft;
+    border-color: $error_soft;
+}
+
+QLabel#Badge[tone="info"] {
+    color: $info;
+    background-color: $accent_soft;
+    border-color: $accent_soft;
+}
+
+/* --------------------------------- 按钮 --------------------------------- */
+
+QPushButton {
+    background-color: $surface;
+    border: 1px solid $input_border;
+    border-radius: 8px;
+    padding: 7px 14px;
+    color: $text;
+    font-size: 13px;
+}
+
+QPushButton:hover {
+    background-color: $hover_bg;
+}
+
+QPushButton:pressed {
+    background-color: $pressed_bg;
+}
+
+QPushButton:disabled {
+    color: $text_disabled;
+    border-color: $divider;
+    background-color: transparent;
+}
+
+QPushButton[variant="primary"] {
+    background-color: $accent;
+    border-color: $accent;
+    color: $accent_text;
+    font-weight: 600;
+}
+
+QPushButton[variant="primary"]:hover {
+    background-color: $accent_hover;
+    border-color: $accent_hover;
+}
+
+QPushButton[variant="primary"]:pressed {
+    background-color: $accent_pressed;
+    border-color: $accent_pressed;
+}
+
+QPushButton[variant="primary"]:disabled {
+    background-color: $accent_soft;
+    border-color: $accent_soft;
+    color: $text_disabled;
+}
+
+QPushButton[variant="ghost"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: $text_secondary;
+}
+
+QPushButton[variant="ghost"]:hover {
+    background-color: $hover_bg;
+    color: $text;
+}
+
+QPushButton[variant="danger"] {
+    background-color: $error;
+    border-color: $error;
+    color: $accent_text;
+    font-weight: 600;
+}
+
+QPushButton[variant="danger"]:hover {
+    background-color: $error;
+    border-color: $error;
+}
+
+QPushButton[variant="danger"]:disabled {
+    background-color: $error_soft;
+    border-color: $error_soft;
+    color: $text_disabled;
+}
+
+QPushButton#NavButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 8px 12px;
+    text-align: left;
+    color: $text_secondary;
+    font-size: 13px;
+}
+
+QPushButton#NavButton:hover {
+    background-color: $hover_bg;
+    color: $text;
+}
+
+QPushButton#NavButton:checked {
+    background-color: $accent_soft;
+    color: $text;
+    font-weight: 600;
+    border-color: $accent_soft;
+}
+
+QPushButton#WinButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0px;
+}
+
+QPushButton#WinButton:hover {
+    background-color: $hover_bg;
+}
+
+QPushButton#WinButton[variant="close"]:hover {
+    background-color: $error;
+}
+
+/* --------------------------------- 输入框 -------------------------------- */
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: $input_bg;
+    border: 1px solid $input_border;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: $text;
+    selection-background-color: $accent;
+    selection-color: $accent_text;
+    min-height: 20px;
+}
+
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: $input_focus;
+}
+
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
+    color: $text_disabled;
+    background-color: $surface;
+}
+
+QLineEdit[invalid="true"] {
+    border-color: $error;
+}
+
+QLineEdit#UrlLineEdit {
+    border: none;
+    background: transparent;
+    padding: 4px 2px;
+    font-size: 14px;
+}
+
+QFrame#UrlBox {
+    background-color: $input_bg;
+    border: 1px solid $input_border;
+    border-radius: 10px;
+}
+
+QFrame#UrlBox:hover {
+    border-color: $input_focus;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox::down-arrow {
+    image: url($arrow_down);
+    width: 12px;
+    height: 12px;
+}
+
+QSpinBox::up-button, QSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 20px;
+    border: none;
+    background: transparent;
+}
+
+QSpinBox::up-button {
+    subcontrol-position: top right;
+}
+
+QSpinBox::down-button {
+    subcontrol-position: bottom right;
+}
+
+QSpinBox::up-arrow {
+    image: url($arrow_up);
+    width: 10px;
+    height: 10px;
+}
+
+QSpinBox::down-arrow {
+    image: url($arrow_down);
+    width: 10px;
+    height: 10px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: $surface;
+    border: 1px solid $card_border;
+    border-radius: 8px;
+    selection-background-color: $accent_soft;
+    selection-color: $text;
+    padding: 4px;
+    outline: none;
+}
+
+QCheckBox {
+    color: $text_secondary;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid $input_border;
+    background-color: $input_bg;
+}
+
+QCheckBox::indicator:hover {
+    border-color: $accent;
+}
+
+QCheckBox::indicator:checked {
+    background-color: $accent;
+    border-color: $accent;
+    image: url($icon_dir/check-white.svg);
+}
+
+/* --------------------------------- 列表 --------------------------------- */
+
+QListWidget, QListView, QTreeView, QTableView {
+    background-color: $input_bg;
+    border: 1px solid $input_border;
+    border-radius: 8px;
+    padding: 4px;
+    outline: none;
+    color: $text;
+}
+
+QListWidget::item {
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: $text_secondary;
+}
+
+QListWidget::item:hover {
+    background-color: $hover_bg;
+}
+
+QListWidget::item:selected {
+    background-color: $selected_bg;
+    color: $text;
+}
+
+QHeaderView::section {
+    background-color: $surface;
+    color: $text_secondary;
+    border: none;
+    border-bottom: 1px solid $card_border;
+    padding: 6px 8px;
+}
+
+/* -------------------------------- 滚动条 -------------------------------- */
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical {
+    background: $scrollbar;
+    border-radius: 5px;
+    min-height: 36px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: $scrollbar_hover;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal {
+    background: $scrollbar;
+    border-radius: 5px;
+    min-width: 36px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: $scrollbar_hover;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0px;
+    width: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* --------------------------- 菜单 / 提示 / Toast ------------------------- */
+
+QMenu {
+    background-color: $surface;
+    border: 1px solid $card_border;
+    border-radius: 8px;
+    padding: 6px;
+}
+
+QMenu::item {
+    padding: 7px 16px;
+    border-radius: 6px;
+    color: $text;
+}
+
+QMenu::item:selected {
+    background-color: $accent_soft;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: $divider;
+    margin: 4px 8px;
+}
+
+QToolTip {
+    background-color: $surface;
+    color: $text;
+    border: 1px solid $card_border;
+    border-radius: 6px;
+    padding: 5px 8px;
+}
+
+QFrame#Toast {
+    border-radius: 10px;
+    border: 1px solid $card_border;
+    background-color: $card_bg;
+}
+
+QFrame#Toast[tone="success"] {
+    border-color: $success;
+}
+
+QFrame#Toast[tone="warning"] {
+    border-color: $warning;
+}
+
+QFrame#Toast[tone="error"] {
+    border-color: $error;
+}
+
+QLabel[role="toast-text"] {
+    font-size: 13px;
+    color: $text;
+}
+
+/* ------------------------------ 进度条 / 其它 ---------------------------- */
+
+QProgressBar {
+    background-color: $track;
+    border: none;
+    border-radius: 6px;
+    height: 10px;
+    text-align: center;
+    color: $text_secondary;
+}
+
+QProgressBar::chunk {
+    background-color: $accent;
+    border-radius: 6px;
+}
+
+QMessageBox {
+    background-color: $window_bg;
+}
+
+QMessageBox QLabel {
+    color: $text;
+}
+
+QFilenameEdit, QSplitter::handle {
+    background-color: $divider;
+}

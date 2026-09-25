@@ -1,0 +1,25 @@
+/* FilePilot 浅色主题特有覆盖 */
+
+QFrame#Card {
+    border-color: $card_border;
+}
+
+QPushButton#NavButton:checked {
+    border-left: 3px solid $accent;
+}
+
+QWidget#TitleBar {
+    border-bottom: 1px solid $divider;
+}
+
+QPushButton#NavButton:hover {
+    background-color: $hover_bg;
+}
+
+QWidget#Sidebar {
+    border-right: 1px solid $divider;
+}
+
+QFrame#Toast {
+    border-width: 1px;
+}

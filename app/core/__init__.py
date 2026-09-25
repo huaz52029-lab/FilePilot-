@@ -1,0 +1,3 @@
+"""FilePilot 核心层：不依赖任何 GUI 框架，可独立测试。"""
+
+from __future__ import annotations
