@@ -145,21 +145,6 @@ python run_filepilot.py
 python -m app
 ```
 
-### 直接使用打包好的程序
-
-```powershell
-python build.py
-dist\FilePilot.exe
-```
-
-发布版本使用带版本号的产物名（同时生成便携压缩包）：
-
-```powershell
-python build.py --release --zip
-# dist\FilePilot-v0.1.0-Windows-x64.exe
-# dist\FilePilot-v0.1.0-Windows-x64.zip
-```
-
 ---
 
 ## 下载流程
