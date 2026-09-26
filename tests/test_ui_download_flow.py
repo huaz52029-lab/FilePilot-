@@ -16,6 +16,7 @@ from app.core.storage.models import HistoryKind
 from app.ui.navigation import PageId
 from app.ui.widgets.download_card import DownloadCard
 from tests.http_server import TestHTTPServer, serve
+from tests.ui_utils import dispose_window
 
 PAYLOAD = bytes(range(256)) * 2048  # 512 KiB
 
@@ -118,8 +119,7 @@ def test_gui_download_flow(qapp, data_dir: Path, http_server: TestHTTPServer) ->
         # 完成通知（提示消息）
         assert any(level == "success" for level, _message in notices)
     finally:
-        window.close()
-        context.shutdown()
+        dispose_window(qapp, window, context)
 
 
 def test_paused_task_stays_visible_after_page_switch(
@@ -185,8 +185,7 @@ def test_paused_task_stays_visible_after_page_switch(
         assert (save_dir / "paused.bin").read_bytes() == payload
         assert service.task(task_id).downloaded > paused_bytes
     finally:
-        window.close()
-        context.shutdown()
+        dispose_window(qapp, window, context)
 
 
 def test_gui_probe_failure_is_reported(qapp, data_dir: Path, http_server: TestHTTPServer) -> None:
@@ -209,5 +208,4 @@ def test_gui_probe_failure_is_reported(qapp, data_dir: Path, http_server: TestHT
         assert failures
         assert "404" in failures[0] or "不存在" in failures[0]
     finally:
-        window.close()
-        context.shutdown()
+        dispose_window(qapp, window, context)

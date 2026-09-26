@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.ui.navigation import MAIN_NAV_ITEMS, PageId
+from tests.ui_utils import dispose_window
 
 
 @pytest.fixture()
@@ -20,10 +21,7 @@ def window(qapp, data_dir: Path):  # type: ignore[no-untyped-def]
     win.resize(1280, 800)
     qapp.processEvents()
     yield win
-    win.close()
-    win.deleteLater()
-    qapp.processEvents()
-    context.shutdown()
+    dispose_window(qapp, win, context)
 
 
 def test_theme_tokens_are_complete(qapp, window) -> None:  # type: ignore[no-untyped-def]

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.ui.navigation import PageId
+from tests.ui_utils import dispose_window
 
 
 def pump_until(qapp, predicate: Callable[[], bool], *, timeout: float = 30.0) -> bool:
@@ -34,10 +35,7 @@ def window(qapp, data_dir: Path):  # type: ignore[no-untyped-def]
     try:
         yield win
     finally:
-        win.close()
-        win.deleteLater()
-        qapp.processEvents()
-        context.shutdown()
+        dispose_window(qapp, win, context)
 
 
 def test_organizer_page_preview_and_execute(
