@@ -209,3 +209,84 @@ def test_gui_probe_failure_is_reported(qapp, data_dir: Path, http_server: TestHT
         assert "404" in failures[0] or "不存在" in failures[0]
     finally:
         dispose_window(qapp, window, context)
+
+
+def test_resume_all_continues_every_paused_task(
+    qapp, data_dir: Path, http_server: TestHTTPServer
+) -> None:
+    """“全部继续”应恢复所有已暂停任务（而不是让它们重新出现在列表里）。"""
+    from app.core.download.models import DownloadStatus
+    from app.services.app_context import AppContext
+    from app.ui.main_window import MainWindow
+
+    save_dir = data_dir / "resume-all"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    payloads = {
+        "one.bin": bytes((index * 3) % 251 for index in range(900_000)),
+        "two.bin": bytes((index * 11) % 251 for index in range(900_000)),
+    }
+    urls = [
+        http_server.register(f"/{name}", payload, mode="slow", etag=f'"{name}"')
+        for name, payload in payloads.items()
+    ]
+
+    context = AppContext(console_log=False)
+    window = MainWindow(context, qapp)
+    window.resize(1280, 800)
+    window.show()
+    try:
+        assert pump_until(qapp, lambda: context.download_backend.started, timeout=20.0)
+        service = context.downloads
+        task_ids: list[str] = []
+        for url in urls:
+            probes: list[object] = []
+            service.probe_ready.connect(probes.append)
+            service.probe(url, save_dir)
+            assert pump_until(qapp, lambda bucket=probes: bool(bucket), timeout=20.0)
+            task_ids.append(service.start(probes[0], save_dir=save_dir))
+
+        # 两个任务都开始接收数据后暂停
+        assert pump_until(
+            qapp,
+            lambda: all(
+                (task := service.task(task_id)) is not None and task.downloaded > 0
+                for task_id in task_ids
+            ),
+            timeout=60.0,
+        ), "任务未开始接收数据"
+        for task_id in task_ids:
+            service.pause(task_id)
+        assert pump_until(
+            qapp,
+            lambda: all(
+                service.task(task_id) is not None
+                and service.task(task_id).status is DownloadStatus.PAUSED
+                for task_id in task_ids
+            ),
+            timeout=60.0,
+        ), "任务未能暂停"
+
+        page = window.pages[PageId.DOWNLOADS]
+        assert pump_until(
+            qapp, lambda: len(page._paused_cards) == 2, timeout=15.0  # noqa: SLF001
+        ), "暂停任务未显示在下载页面"
+
+        # “全部继续”
+        service.resume_all()
+        assert pump_until(
+            qapp,
+            lambda: all(
+                service.task(task_id) is not None
+                and service.task(task_id).status is DownloadStatus.COMPLETED
+                for task_id in task_ids
+            ),
+            timeout=120.0,
+        ), "“全部继续”未能恢复所有暂停任务"
+        for name, payload in payloads.items():
+            assert (save_dir / name).read_bytes() == payload
+        assert pump_until(
+            qapp, lambda: len(page._paused_cards) == 0, timeout=15.0  # noqa: SLF001
+        )
+    finally:
+        dispose_window(qapp, window, context)
+
