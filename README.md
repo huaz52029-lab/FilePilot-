@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.9%2B-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)](#)
-[![Version](https://img.shields.io/badge/Version-v0.1.1-3B82F6.svg)](#项目版本)
+[![Version](https://img.shields.io/badge/Version-v0.1.2-3B82F6.svg)](#项目版本)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 - **项目地址**：<https://github.com/huaz52029-lab/FilePilot->
@@ -25,13 +25,13 @@
 ```text
 Windows x64
     ↓
-FilePilot-v0.1.1-Windows-x64.exe
+FilePilot-v0.1.2-Windows-x64.exe
 ```
 
 | 文件 | 说明 |
 | --- | --- |
-| [FilePilot-v0.1.1-Windows-x64.exe](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.1/FilePilot-v0.1.1-Windows-x64.exe) | 单文件可执行程序（推荐，双击即用） |
-| [FilePilot-v0.1.1-Windows-x64.zip](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.1/FilePilot-v0.1.1-Windows-x64.zip) | 便携压缩包（含 README 与 LICENSE） |
+| [FilePilot-v0.1.2-Windows-x64.exe](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.2/FilePilot-v0.1.2-Windows-x64.exe) | 单文件可执行程序（推荐，双击即用） |
+| [FilePilot-v0.1.2-Windows-x64.zip](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.2/FilePilot-v0.1.2-Windows-x64.zip) | 便携压缩包（含 README 与 LICENSE） |
 
 - 系统要求：Windows 10 / 11（x64）
 - 数据库、配置与日志写入 `%APPDATA%\FilePilot`，不会写入程序所在目录
@@ -122,6 +122,10 @@ FilePilot-v0.1.1-Windows-x64.exe
 ### 设置页底部：项目地址与版本
 
 ![项目地址](docs/images/dark-settings-bottom.png)
+
+### 文件整理 · 批量重命名（v0.1.1 新增）
+
+![批量重命名](docs/images/dark-organizer-bottom.png)
 
 更多截图见 [`docs/images`](docs/images)（深色 / 浅色各 8 页）。
 
@@ -476,6 +480,15 @@ A：跨磁盘无法直接重命名，必须复制数据。FilePilot 采用“复
 
 ## 更新日志
 
+### v0.1.2
+
+修复：
+
+- 修复“空间分析 → 排序方式”控件脱离布局导致的界面重叠：该控件此前会浮在卡片左上角，
+  既遮挡“分析位置”标题与说明，又导致“按占用空间 / 按文件数量”无法点击
+- 新增界面布局回归测试：遍历全部页面检查是否有控件未纳入布局，防止同类问题复发
+- 重新生成全部界面截图（空间分析页、批量重命名页）
+
 ### v0.1.1
 
 新增：
@@ -502,14 +515,14 @@ A：跨磁盘无法直接重命名，必须复制数据。FilePilot 采用“复
 
 ## 项目版本
 
-当前版本：**v0.1.1**
+当前版本：**v0.1.2**
 
 | 位置 | 值 |
 | --- | --- |
-| 软件版本（`app/core/common/constants.py` 的 `APP_VERSION`） | `0.1.1` |
-| 打包元数据（`pyproject.toml` 的 `project.version`） | `0.1.1` |
-| 关于页面 / 设置页面 | 读取 `APP_VERSION`，显示 `v0.1.1` |
-| Windows EXE 版本资源 | 打包时写入 `0.1.1` |
+| 软件版本（`app/core/common/constants.py` 的 `APP_VERSION`） | `0.1.2` |
+| 打包元数据（`pyproject.toml` 的 `project.version`） | `0.1.2` |
+| 关于页面 / 设置页面 | 读取 `APP_VERSION`，显示 `v0.1.2` |
+| Windows EXE 版本资源 | 打包时写入 `0.1.2` |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
 ---

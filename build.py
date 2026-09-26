@@ -3,7 +3,7 @@
 用法::
 
     python build.py                # 单文件模式 → dist/FilePilot.exe
-    python build.py --release      # 发布命名 → dist/FilePilot-v0.1.1-Windows-x64.exe
+    python build.py --release      # 发布命名 → dist/FilePilot-v0.1.2-Windows-x64.exe
     python build.py --release --zip  # 额外生成便携版压缩包
     python build.py --onedir       # 目录模式（启动更快）→ dist/FilePilot/FilePilot.exe
     python build.py --console      # 保留控制台（排查启动问题）

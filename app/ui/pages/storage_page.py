@@ -71,6 +71,7 @@ class StoragePage(BasePage):
             description="影响下方子目录的排列顺序。",
             parent=location_card,
         )
+        location_card.add(self.sort_row)
         self.sort_row.changed.connect(lambda _value: self._render_children())
 
         buttons = QHBoxLayout()
