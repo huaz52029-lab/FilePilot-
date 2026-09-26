@@ -122,6 +122,73 @@ def test_gui_download_flow(qapp, data_dir: Path, http_server: TestHTTPServer) ->
         context.shutdown()
 
 
+def test_paused_task_stays_visible_after_page_switch(
+    qapp, data_dir: Path, http_server: TestHTTPServer
+) -> None:
+    """暂停的任务必须持续显示在下载页面，切换页面后仍然存在，并可继续。"""
+    from app.core.download.models import DownloadStatus
+    from app.services.app_context import AppContext
+    from app.ui.main_window import MainWindow
+
+    save_dir = data_dir / "paused-downloads"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    payload = bytes((index * 5) % 251 for index in range(1_200_000))
+    url = http_server.register("/paused.bin", payload, mode="slow", etag='"paused"')
+
+    context = AppContext(console_log=False)
+    window = MainWindow(context, qapp)
+    window.resize(1280, 800)
+    window.show()
+    try:
+        assert pump_until(qapp, lambda: context.download_backend.started, timeout=20.0)
+        service = context.downloads
+        probes: list[object] = []
+        service.probe_ready.connect(probes.append)
+        service.probe(url, save_dir)
+        assert pump_until(qapp, lambda: bool(probes), timeout=20.0)
+
+        task_id = service.start(probes[0], save_dir=save_dir)
+        assert pump_until(
+            qapp,
+            lambda: (task := service.task(task_id)) is not None and task.downloaded > 0,
+            timeout=40.0,
+        ), "下载未开始接收数据"
+        service.pause(task_id)
+        assert pump_until(
+            qapp,
+            lambda: service.task(task_id) is not None
+            and service.task(task_id).status is DownloadStatus.PAUSED,
+            timeout=40.0,
+        ), "任务未能暂停"
+        paused_bytes = service.task(task_id).downloaded
+        assert paused_bytes > 0
+
+        page = window.pages[PageId.DOWNLOADS]
+        # 切换页面再回来，暂停任务必须依然显示
+        window._switch_page(PageId.HOME)  # noqa: SLF001 - 集成测试
+        qapp.processEvents()
+        window._switch_page(PageId.DOWNLOADS)  # noqa: SLF001 - 集成测试
+        assert pump_until(
+            qapp, lambda: len(page._paused_cards) == 1, timeout=15.0  # noqa: SLF001
+        ), "暂停任务从下载页面消失了"
+        assert page._paused_cards[0].task.task_id == task_id  # noqa: SLF001
+        assert page.paused_section.count_badge.text() == "1"
+
+        # 点击“继续”后应恢复下载并完成
+        service.resume(task_id)
+        assert pump_until(
+            qapp,
+            lambda: service.task(task_id) is not None
+            and service.task(task_id).status is DownloadStatus.COMPLETED,
+            timeout=120.0,
+        ), "继续下载未能完成"
+        assert (save_dir / "paused.bin").read_bytes() == payload
+        assert service.task(task_id).downloaded > paused_bytes
+    finally:
+        window.close()
+        context.shutdown()
+
+
 def test_gui_probe_failure_is_reported(qapp, data_dir: Path, http_server: TestHTTPServer) -> None:
     """链接失效时界面收到中文错误提示，而不是异常堆栈。"""
     from app.services.app_context import AppContext

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -22,6 +22,7 @@ from app.core.download.control import (
     DownloadInterrupt,
     PausedInterrupt,
     RangeUnsupported,
+    UrlExpiredError,
 )
 from app.core.download.models import DownloadSegment, SegmentState
 from app.core.download.retry import RetryPolicy
@@ -29,6 +30,58 @@ from app.core.download.retry import RetryPolicy
 _log = get_logger("download.segment")
 
 RetryCallback = Callable[[DownloadSegment, BaseException, float, int], None]
+UrlRefreshCallback = Callable[[], Awaitable[str]]
+
+#: 同一任务内允许的“重新建立连接”次数上限，避免失效地址无限重试
+MAX_URL_REFRESH: int = 5
+
+#: 识别临时签名地址失效的关键信息
+_EXPIRY_MARKERS: tuple[bytes, ...] = (
+    b"jwt",
+    b"expired",
+    b"expire",
+    b"signature",
+    b"token",
+    b"unauthorized",
+)
+
+
+def looks_like_url_expired(status: int, body: bytes) -> bool:
+    """判断响应是否属于“临时下载地址失效”。
+
+    覆盖 GitHub Release 常见的 ``618 jwt:expired``，以及签名 URL / CDN 在过期时
+    返回的 401 / 403（响应体包含 jwt / expired / signature 等关键字）。
+    """
+    if status == 618:  # GitHub 使用的非标准状态码
+        return True
+    if status in {401, 403}:
+        lowered = body.lower()
+        return any(marker in lowered for marker in _EXPIRY_MARKERS)
+    return False
+
+
+#: 200 响应里出现这些片段说明服务端返回了错误页（签名 URL 过期常见）
+_STRONG_EXPIRY_MARKERS: tuple[bytes, ...] = (
+    b"<error",
+    b"jwt",
+    b"expiredrequest",
+    b"signaturedoesnotmatch",
+    b"accessdenied",
+)
+
+
+def body_looks_like_expiry_page(body: bytes) -> bool:
+    """响应体是否明显是“地址过期 / 签名错误”的错误页。"""
+    lowered = body.lower()
+    return any(marker in lowered for marker in _STRONG_EXPIRY_MARKERS)
+
+
+def response_snippet(body: bytes, limit: int = 2048) -> str:
+    """把响应体片段转成便于日志阅读的文本。"""
+    try:
+        return body[:limit].decode("utf-8", errors="replace").strip()
+    except Exception:  # noqa: BLE001 - 仅用于日志  # pragma: no cover
+        return ""
 
 
 class SegmentAllocator:
@@ -134,6 +187,8 @@ class SegmentWorker:
         base_headers: dict[str, str],
         on_retry: RetryCallback | None = None,
         use_range: bool = True,
+        on_url_expired: UrlRefreshCallback | None = None,
+        url_is_redirected: bool = False,
     ) -> None:
         self._session = session
         self._url = url
@@ -143,6 +198,9 @@ class SegmentWorker:
         self._base_headers = base_headers
         self._on_retry = on_retry
         self._use_range = use_range
+        self._on_url_expired = on_url_expired
+        self._url_is_redirected = url_is_redirected
+        self._refresh_count = 0
 
     @property
     def use_range(self) -> bool:
@@ -152,6 +210,28 @@ class SegmentWorker:
     @use_range.setter
     def use_range(self, value: bool) -> None:
         self._use_range = bool(value)
+
+    @property
+    def url(self) -> str:
+        return self._url
+
+    @url.setter
+    def url(self, value: str) -> None:
+        """切换下载地址（临时签名地址刷新后调用）。"""
+        self._url = value
+
+    @property
+    def refresh_count(self) -> int:
+        return self._refresh_count
+
+    @property
+    def url_is_redirected(self) -> bool:
+        """当前使用的是否为重定向 / 签名后的临时地址。"""
+        return self._url_is_redirected
+
+    @url_is_redirected.setter
+    def url_is_redirected(self, value: bool) -> None:
+        self._url_is_redirected = bool(value)
 
     async def run(self, chunk: DownloadSegment) -> None:
         """把分段下载完整；失败会按策略重试，不可恢复时抛出异常。"""
@@ -169,6 +249,9 @@ class SegmentWorker:
                     await self._fetch_chunk(handle, chunk)
                 except DownloadInterrupt:
                     raise
+                except UrlExpiredError as exc:
+                    # 临时地址失效：重新获取下载地址后从当前位置继续（不丢进度）
+                    await self._handle_url_expired(exc)
                 except (
                     aiohttp.ClientError,
                     TimeoutError,
@@ -198,6 +281,9 @@ class SegmentWorker:
         async with self._session.get(self._url, headers=headers) as response:
             status = response.status
             if status == 200 and self._use_range:
+                snippet = await self._peek_error_body(response)
+                if self._url_is_redirected and body_looks_like_expiry_page(snippet):
+                    raise UrlExpiredError(200, response_snippet(snippet))
                 # 服务器忽略 Range，返回完整内容
                 raise RangeUnsupported("服务器未按 Range 返回分段数据")
             if status == 416:
@@ -209,6 +295,11 @@ class SegmentWorker:
                     detail=f"range={chunk.current}-{chunk.end}",
                 )
             if status not in {200, 206}:
+                snippet = await self._peek_error_body(response)
+                if looks_like_url_expired(status, snippet) or (
+                    self._url_is_redirected and status in {403, 404}
+                ):
+                    raise UrlExpiredError(status, response_snippet(snippet))
                 raise self._status_error(status)
 
             if self._use_range:
@@ -231,6 +322,14 @@ class SegmentWorker:
                 if chunk.current > chunk.end:
                     break
         handle.flush()
+
+    @staticmethod
+    async def _peek_error_body(response: aiohttp.ClientResponse, limit: int = 2048) -> bytes:
+        """读取错误响应的一小段内容用于判断原因（不读取完整响应体）。"""
+        try:
+            return await response.content.read(limit)
+        except Exception:  # noqa: BLE001 - 读取失败时按普通错误处理
+            return b""
 
     async def stream_unknown_size(self, *, start: int = 0) -> int:
         """流式下载未知大小的文件，返回已写入字节数。
@@ -280,6 +379,34 @@ class SegmentWorker:
                         attempt,
                     )
                 await self._control.sleep(delay)
+
+    async def _handle_url_expired(self, exc: UrlExpiredError) -> None:
+        """处理临时地址失效：重新获取新地址，保留已下载进度。"""
+        _log.warning(
+            "临时下载地址失效（HTTP %s，第 %s 次）：%s",
+            exc.status,
+            self._refresh_count + 1,
+            exc.detail[:200],
+        )
+        if self._on_url_expired is None or self._refresh_count >= MAX_URL_REFRESH:
+            raise DownloadNetworkError(
+                "临时下载地址已失效且无法重新建立连接，请稍后重试。",
+                status=exc.status,
+                retryable=False,
+                detail=exc.detail,
+            )
+        self._refresh_count += 1
+        try:
+            self._url = await self._on_url_expired()
+        except DownloadNetworkError:
+            raise
+        except Exception as exc2:  # noqa: BLE001 - 统一转换成网络错误
+            raise DownloadNetworkError(
+                "重新获取下载地址失败，请检查网络后重试。",
+                detail=str(exc2),
+            ) from exc2
+        self._url_is_redirected = True
+        # 地址已更新，交给外层循环继续按 Range 下载剩余部分
 
     def _validate_range(self, response: aiohttp.ClientResponse, chunk: DownloadSegment) -> None:
         """校验 Content-Range 是否与请求一致，避免写入错位。"""

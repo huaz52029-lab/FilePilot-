@@ -17,6 +17,14 @@ from app.core.files.categories import FileCategory
 from app.core.files.duplicate import find_duplicates, move_to_duplicate_folder
 from app.core.files.models import OrganizePlan, OrganizeResult
 from app.core.files.organizer import execute_plan, plan_by_category, plan_by_rules
+from app.core.files.renamer import (
+    RenameMode,
+    RenamePlan,
+    RenameResult,
+    SortKey,
+    build_rename_plan,
+    execute_rename_plan,
+)
 from app.core.files.rules import OrganizeRule
 from app.core.files.search import search_files
 from app.core.storage.models import HistoryKind, HistoryStatus
@@ -34,6 +42,11 @@ class LibraryService(QObject):
     organize_finished = Signal(object)  # OrganizeResult
     duplicates_ready = Signal(object)  # DuplicateScanResult
     duplicates_moved = Signal(int)  # 已移动的重复文件数量
+    duplicates_move_finished = Signal(object)  # DuplicateMoveResult
+    duplicates_move_progress = Signal(int, int, str)  # (已完成, 总数, 当前文件)
+    rename_preview_ready = Signal(object)  # RenamePlan
+    rename_finished = Signal(object)  # RenameResult
+    rename_progress = Signal(int, int, str)  # (已完成, 总数, 当前文件)
     search_ready = Signal(object)  # list[FileEntry]
     failed = Signal(str)
     progress = Signal(object)
@@ -156,30 +169,144 @@ class LibraryService(QObject):
     def move_duplicates(self, paths: Iterable[Path], *, target_dir: Path) -> FunctionWorker:
         """把重复文件移动到指定文件夹（默认不删除）。"""
         return self._runner.submit(
-            move_to_duplicate_folder,
+            self._run_duplicate_move,
             list(paths),
             target_dir=target_dir,
             on_result=self._on_duplicates_moved,
             on_error=self._on_error,
+            on_progress=self._on_move_progress,
+            on_cancelled=lambda: self.failed.emit("已取消移动重复文件。"),
         )
 
-    def _on_duplicates_moved(self, result: tuple[int, list[str]]) -> None:
-        moved, errors = result
+    def _run_duplicate_move(
+        self,
+        paths: list[Path],
+        *,
+        target_dir: Path,
+        verify_hash: bool = False,
+        report=None,  # type: ignore[no-untyped-def]
+        token=None,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        should_cancel = (lambda: token.cancelled) if token is not None else None
+
+        def on_progress(index: int, total: int, path: Path) -> None:
+            if report is not None:
+                report((index, total, str(path)))
+
+        return move_to_duplicate_folder(
+            paths,
+            target_dir=target_dir,
+            should_cancel=should_cancel,
+            on_progress=on_progress,
+            verify_hash=verify_hash,
+        )
+
+    def _on_move_progress(self, payload: object) -> None:
+        if isinstance(payload, tuple) and len(payload) == 3:
+            index, total, path = payload
+            self.duplicates_move_progress.emit(int(index), int(total), str(path))
+
+    def _on_duplicates_moved(self, result) -> None:  # type: ignore[no-untyped-def]
+        moved = getattr(result, "moved", 0)
+        errors = getattr(result, "errors", [])
         try:
             self._history.add(
                 kind=HistoryKind.FILE,
                 action="moved",
-                title=f"移动重复文件 {moved} 个",
-                detail="；".join(errors) if errors else "已移动到“重复文件”文件夹",
+                title=f"移动重复文件（{getattr(result, 'summary', '')}）",
+                detail="；".join(f"{path.name}：{reason}" for path, reason in errors)
+                if errors
+                else "已移动到“重复文件”文件夹",
+                path=str(errors[0][0].parent) if errors else "",
                 status=HistoryStatus.SUCCESS if not errors else HistoryStatus.WARNING,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("写入文件操作历史失败：%s", exc)
         if errors:
-            self.failed.emit(f"移动完成 {moved} 个，{len(errors)} 个失败：{errors[0]}")
+            first = errors[0]
+            self.failed.emit(f"移动完成 {moved} 个，{len(errors)} 个失败：{first[0].name}：{first[1]}")
         else:
             self.progress.emit(f"已移动 {moved} 个重复文件。")
         self.duplicates_moved.emit(moved)
+        self.duplicates_move_finished.emit(result)
+
+    # ------------------------------------------------------------------
+    # 批量重命名
+    # ------------------------------------------------------------------
+    def preview_rename(
+        self,
+        root: Path,
+        *,
+        mode: RenameMode = RenameMode.PREFIX_NUMBER,
+        prefix: str = "",
+        start: int = 1,
+        padding: int = 4,
+        sort_key: SortKey = SortKey.NAME,
+        extensions: Iterable[str] = (),
+        recursive: bool = False,
+    ) -> FunctionWorker:
+        """生成重命名预览（只读，不修改任何文件）。"""
+        return self._runner.submit(
+            build_rename_plan,
+            root,
+            on_result=self.rename_preview_ready.emit,
+            on_error=self._on_error,
+            mode=mode,
+            prefix=prefix,
+            start=start,
+            padding=padding,
+            sort_key=sort_key,
+            extensions=tuple(extensions),
+            recursive=recursive,
+        )
+
+    def execute_rename(self, plan: RenamePlan) -> FunctionWorker:
+        """执行重命名计划（由界面确认后调用）。"""
+        return self._runner.submit(
+            self._run_rename,
+            plan,
+            on_result=self._on_rename_finished,
+            on_error=self._on_error,
+            on_progress=self._on_rename_progress,
+            on_cancelled=lambda: self.failed.emit("已取消批量重命名。"),
+        )
+
+    def _run_rename(
+        self,
+        plan: RenamePlan,
+        *,
+        report=None,  # type: ignore[no-untyped-def]
+        token=None,  # type: ignore[no-untyped-def]
+    ) -> RenameResult:
+        should_cancel = (lambda: token.cancelled) if token is not None else None
+        return execute_rename_plan(
+            plan,
+            should_cancel=should_cancel,
+            on_progress=(lambda index, total, path: report((index, total, str(path))))
+            if report is not None
+            else None,
+        )
+
+    def _on_rename_progress(self, payload: object) -> None:
+        if isinstance(payload, tuple) and len(payload) == 3:
+            index, total, path = payload
+            self.rename_progress.emit(int(index), int(total), str(path))
+
+    def _on_rename_finished(self, result: RenameResult) -> None:
+        try:
+            self._history.add(
+                kind=HistoryKind.FILE,
+                action="renamed",
+                title=f"批量重命名（{result.summary}）",
+                detail="；".join(f"{path.name}：{reason}" for path, reason in result.errors)
+                if result.errors
+                else f"目录：{result.plan.root}",
+                path=str(result.plan.root),
+                status=HistoryStatus.SUCCESS if result.success else HistoryStatus.WARNING,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("写入重命名历史失败：%s", exc)
+        self.rename_finished.emit(result)
 
     # ------------------------------------------------------------------
     # 搜索

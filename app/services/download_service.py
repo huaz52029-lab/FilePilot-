@@ -132,9 +132,24 @@ class DownloadService(QObject):
     def queued_tasks(self) -> list[DownloadTask]:
         return self.tasks(statuses=[DownloadStatus.PENDING, DownloadStatus.QUEUED])
 
+    def paused_tasks(self) -> list[DownloadTask]:
+        """已暂停的任务（必须持续显示在下载页面，直到用户继续或删除）。"""
+        return self.tasks(statuses=[DownloadStatus.PAUSED])
+
+    def failed_tasks(self) -> list[DownloadTask]:
+        return self.tasks(statuses=[DownloadStatus.FAILED, DownloadStatus.CANCELLED])
+
     def completed_tasks(self) -> list[DownloadTask]:
+        return self.tasks(statuses=[DownloadStatus.COMPLETED])
+
+    def finished_tasks(self) -> list[DownloadTask]:
+        """已完成 / 失败 / 已取消（“清空已完成”按钮使用）。"""
         return self.tasks(
-            statuses=[DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED]
+            statuses=[
+                DownloadStatus.COMPLETED,
+                DownloadStatus.FAILED,
+                DownloadStatus.CANCELLED,
+            ]
         )
 
     def task(self, task_id: str) -> DownloadTask | None:

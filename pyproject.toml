@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "filepilot"
-version = "0.1.0"
+version = "0.1.1"
 description = "FilePilot - 现代 Windows 文件管理与智能下载工具"
 readme = "README.md"
 requires-python = ">=3.13"

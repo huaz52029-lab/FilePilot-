@@ -438,3 +438,135 @@ async def test_bad_content_range_is_reported(
 async def test_https_probe_real_site(tmp_path: Path) -> None:
     """真实 HTTPS 探测（默认跳过：需要外网）。"""
     pytest.skip("需要外网访问，默认跳过；可用 FILEPILOT_NETWORK_TESTS=1 手动运行")
+
+
+# ---------------------------------------------------------------------------
+# 临时签名地址失效（GitHub Release 618 / jwt:expired）
+# ---------------------------------------------------------------------------
+async def test_signed_url_expiry_refreshes_and_resumes(
+    http_server: TestHTTPServer, tmp_path: Path
+) -> None:
+    """临时下载地址失效后，必须重新向原始 URL 取新地址并断点续传。"""
+    payload = bytes((index * 13) % 251 for index in range(2 * 1024 * 1024))
+    url = http_server.register_signed("/release.bin", payload, token_ttl=2, etag='"signed"')
+
+    async with EngineHarness(tmp_path, connection_mode=4, adaptive=False) as harness:
+        probe = await harness.engine.probe(url, tmp_path)
+        assert probe.final_url != url, "原始 URL 应重定向到带令牌的临时地址"
+        assert "token=" in probe.final_url
+        task = harness.engine.create_task(probe, save_dir=tmp_path, connections=4)
+        await harness.engine.start_task(task, is_new=True)
+        await asyncio.wait_for(harness.engine.scheduler.join(), timeout=120)
+        result = harness.engine.get_task(task.task_id)
+        notices = list(harness.events)
+        stored = harness.repo.get_task(task.task_id)
+
+    assert result is not None
+    assert result.status is DownloadStatus.COMPLETED, result.error_message
+    target = tmp_path / "release.bin"
+    assert target.read_bytes() == payload, "续传后的文件内容必须完整"
+    assert result.sha256 == sha256_of(payload)
+
+    # 任务始终保存**原始 URL**，不会被临时签名地址覆盖
+    assert result.url == url
+    assert stored is not None and stored.url == url
+
+    # 提示与日志：确实做过“重新建立连接”
+    assert any("重新建立连接" in message for _level, message in notices), notices
+
+    # 刷新后从断点继续：应出现非 0 起点的 Range 请求
+    ranges = [item for item in http_server.state.ranges_for("/release.bin") if item]
+    assert ranges, "应至少发起过一次 Range 请求"
+    assert any(not item.replace(" ", "").startswith("bytes=0-") for item in ranges), (
+        "刷新地址后应从中断偏移继续下载，而不是从头开始"
+    )
+    # 原始 URL 被重新请求过（首次探测 + 至少一次刷新）
+    assert http_server.state.signed_redirects >= 2
+
+
+# ---------------------------------------------------------------------------
+# 暂停任务的持久化与重启行为
+# ---------------------------------------------------------------------------
+async def test_paused_task_survives_engine_restart(
+    http_server: TestHTTPServer, tmp_path: Path
+) -> None:
+    """用户暂停的任务在“重启”后必须仍然是暂停状态（不会被自动恢复）。"""
+    payload = PAYLOAD * 6
+    url = http_server.register("/pause-restart.bin", payload, mode="slow", etag='"p1"')
+
+    async with EngineHarness(tmp_path, connection_mode=1, adaptive=False) as harness:
+        probe = await harness.engine.probe(url, tmp_path)
+        task = harness.engine.create_task(probe, save_dir=tmp_path, connections=1)
+        await harness.engine.start_task(task, is_new=True)
+        for _ in range(150):
+            await asyncio.sleep(0.1)
+            current = harness.engine.get_task(task.task_id)
+            if current is not None and current.downloaded > 0:
+                break
+        harness.engine.pause(task.task_id)
+        for _ in range(100):
+            await asyncio.sleep(0.1)
+            current = harness.engine.get_task(task.task_id)
+            if current is not None and current.status is DownloadStatus.PAUSED:
+                break
+        paused = harness.engine.get_task(task.task_id)
+        assert paused is not None and paused.status is DownloadStatus.PAUSED
+        paused_bytes = paused.downloaded
+        assert paused_bytes > 0
+        stored = harness.repo.get_task(task.task_id)
+        assert stored is not None and stored.status is DownloadStatus.PAUSED, "暂停状态必须持久化"
+        task_id = task.task_id
+
+    async with EngineHarness(tmp_path, connection_mode=1, adaptive=False) as second:
+        restored = await second.engine.load_unfinished()
+        entry = second.engine.get_task(task_id)
+        assert entry is not None
+        assert entry.status is DownloadStatus.PAUSED, "重启后暂停任务必须仍然存在且为已暂停"
+        assert entry.interrupted is False, "用户主动暂停的任务不应被标记为可自动恢复"
+        assert any(item.task_id == task_id for item in restored)
+
+        assert await second.engine.resume(task_id) is True
+        await asyncio.wait_for(second.engine.scheduler.join(), timeout=120)
+        final = second.engine.get_task(task_id)
+
+    assert final is not None and final.status is DownloadStatus.COMPLETED
+    assert (tmp_path / "pause-restart.bin").read_bytes() == payload
+    assert final.downloaded == len(payload)
+
+
+async def test_interrupted_download_is_flagged_for_auto_resume(
+    http_server: TestHTTPServer, tmp_path: Path
+) -> None:
+    """程序退出时仍在下载的任务，重启后应被标记为“被中断”，可供自动恢复。"""
+    payload = PAYLOAD * 6
+    url = http_server.register("/crash.bin", payload, mode="slow", etag='"c1"')
+
+    first = EngineHarness(tmp_path, connection_mode=1, adaptive=False)
+    await first.engine.start()
+    try:
+        probe = await first.engine.probe(url, tmp_path)
+        task = first.engine.create_task(probe, save_dir=tmp_path, connections=1)
+        await first.engine.start_task(task, is_new=True)
+        for _ in range(200):
+            await asyncio.sleep(0.1)
+            stored = first.repo.get_task(task.task_id)
+            if (
+                stored is not None
+                and stored.status is DownloadStatus.DOWNLOADING
+                and stored.downloaded > 0
+            ):
+                break
+        else:  # pragma: no cover - 依赖后台持久化时序
+            raise AssertionError("未在预期时间内观察到“下载中”状态的持久化")
+
+        # 模拟程序被直接关闭：另一个引擎实例读取数据库
+        async with EngineHarness(tmp_path, connection_mode=1, adaptive=False) as second:
+            restored = await second.engine.load_unfinished()
+            entry = second.engine.get_task(task.task_id)
+            assert entry is not None
+            assert entry.status is DownloadStatus.PAUSED
+            assert entry.interrupted is True, "被中断的任务应标记为可自动恢复"
+            assert any(item.task_id == task.task_id for item in restored)
+    finally:
+        await first.engine.shutdown()
+        first.db.dispose()

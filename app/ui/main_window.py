@@ -24,7 +24,7 @@ from app.core.common.constants import (
 )
 from app.core.common.helpers import format_speed, normalize_url
 from app.core.common.logger import get_logger
-from app.core.download.models import DownloadStats
+from app.core.download.models import DownloadStats, DownloadStatus
 from app.services.app_context import AppContext
 from app.ui.frameless import FramelessMainWindow
 from app.ui.icons import default_icon_provider
@@ -216,25 +216,37 @@ class MainWindow(FramelessMainWindow):
             self.show_toast("下载引擎启动失败，请查看日志。", ToastLevel.ERROR.value)
 
     def _on_downloads_ready(self) -> None:
-        """下载引擎就绪：提示并（按设置）自动恢复未完成任务。"""
+        """下载引擎就绪：提示未完成任务，并按设置自动恢复**被中断**的任务。
+
+        用户主动“暂停”的任务不会被自动恢复，重启后仍显示为已暂停，
+        需要用户手动点击“继续”。
+        """
         unfinished = [
             task for task in self.context.downloads.tasks() if not task.status.is_final
         ]
         if not unfinished:
             return
+        interrupted = [task for task in unfinished if task.interrupted]
+        paused = [
+            task
+            for task in unfinished
+            if task.status is DownloadStatus.PAUSED and not task.interrupted
+        ]
         if self.context.settings.notify_restored:
-            self.show_toast(
-                f"已恢复 {len(unfinished)} 个未完成下载任务。", ToastLevel.INFO.value
-            )
-        if not self.context.settings.auto_resume:
+            parts: list[str] = []
+            if interrupted:
+                parts.append(f"{len(interrupted)} 个被中断的任务")
+            if paused:
+                parts.append(f"{len(paused)} 个暂停的任务")
+            message = "已恢复 " + "、".join(parts) if parts else "已恢复未完成的任务"
+            self.show_toast(f"{message}，可在下载中心查看。", ToastLevel.INFO.value)
+        if not self.context.settings.auto_resume or not interrupted:
             return
-        for task in unfinished:
-            if task.status.value == "completed":
-                continue
+        for task in interrupted:
             try:
                 self.context.downloads.resume(task.task_id)
             except Exception as exc:  # noqa: BLE001
-                _log.warning("恢复任务 %s 失败：%s", task.task_id, exc)
+                _log.warning("自动恢复任务 %s 失败：%s", task.task_id, exc)
 
     # ------------------------------------------------------------------
     # 主题与窗口状态

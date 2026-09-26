@@ -6,8 +6,12 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QRadioButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -15,13 +19,14 @@ from PySide6.QtWidgets import (
 from app.core.common.helpers import format_bytes, open_in_explorer, truncate_text
 from app.core.files.categories import all_categories, category_label
 from app.core.files.models import OrganizePlan
+from app.core.files.renamer import RenameMode, RenamePlan, RenameStatus, SortKey
 from app.core.files.rules import OrganizeRule
 from app.ui.navigation import PageId
 from app.ui.pages.base_page import BasePage
 from app.ui.widgets.badge import StatusBadge
 from app.ui.widgets.buttons import DangerButton, GhostButton, PrimaryButton, SecondaryButton
 from app.ui.widgets.cards import Card, SectionHeader
-from app.ui.widgets.dialog import confirm
+from app.ui.widgets.dialog import confirm, show_result_details
 from app.ui.widgets.empty_state import EmptyState
 from app.ui.widgets.file_card import FileCard
 from app.ui.widgets.inputs import ComboRow, PathPicker, SwitchRow
@@ -30,6 +35,14 @@ from app.ui.widgets.section import Section
 from app.ui.widgets.toast import ToastLevel
 
 MAX_PREVIEW_ROWS = 200
+MAX_RENAME_ROWS = 200
+
+RENAME_STATUS_TONES: dict[RenameStatus, str] = {
+    RenameStatus.READY: "accent",
+    RenameStatus.CONFLICT: "error",
+    RenameStatus.UNCHANGED: "neutral",
+    RenameStatus.INVALID: "error",
+}
 
 
 class OrganizerPage(BasePage):
@@ -45,6 +58,9 @@ class OrganizerPage(BasePage):
         self._preview_widgets: list[QWidget] = []
         self._rule_widgets: list[QWidget] = []
         self._worker = None
+        self._rename_plan: RenamePlan | None = None
+        self._rename_rows: list[QWidget] = []
+        self._rename_worker = None
         self._build()
         self._connect_service()
 
@@ -168,12 +184,138 @@ class OrganizerPage(BasePage):
         action_row.addWidget(self.execute_button, 0)
         action_row.addStretch(1)
         self.preview_section.content.addLayout(action_row)
+
+        self._build_rename_section(content)
         content.addStretch(1)
+
+    # ------------------------------------------------------------------
+    # 批量重命名（表单 + 预览）
+    # ------------------------------------------------------------------
+    def _build_rename_section(self, content: QVBoxLayout) -> None:
+        """构建“批量重命名”表单与预览列表。"""
+        card = Card(padding=(20, 18, 20, 18), spacing=14)
+        card.add(
+            SectionHeader(
+                "批量重命名",
+                "按顺序自动编号；执行前必须预览，绝不覆盖已有文件",
+                icon="hash",
+                parent=card,
+            )
+        )
+        self.rename_path_picker = PathPicker(
+            str(self.settings.organize_root or self.settings.download_dir),
+            placeholder="选择需要重命名的文件夹",
+            title="选择需要重命名的文件夹",
+            parent=card,
+        )
+        card.add(self.rename_path_picker)
+
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(16)
+        mode_label = QLabel("命名方式", card)
+        mode_label.setProperty("role", "form-title")
+        mode_row.addWidget(mode_label, 0)
+        self.rename_mode_prefix = QRadioButton("名称 + 编号（照片0001.jpg）", card)
+        self.rename_mode_prefix.setChecked(True)
+        self.rename_mode_number = QRadioButton("纯编号（0001.jpg）", card)
+        mode_row.addWidget(self.rename_mode_prefix, 0)
+        mode_row.addWidget(self.rename_mode_number, 0)
+        mode_row.addStretch(1)
+        card.add_layout(mode_row)
+
+        form = QGridLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+        form.setColumnStretch(1, 1)
+        form.setColumnStretch(3, 1)
+
+        name_label = QLabel("名称", card)
+        name_label.setProperty("role", "form-title")
+        self.rename_prefix_edit = QLineEdit("照片", card)
+        self.rename_prefix_edit.setPlaceholderText("例如：照片（纯编号模式下可留空）")
+        form.addWidget(name_label, 0, 0)
+        form.addWidget(self.rename_prefix_edit, 0, 1)
+
+        start_label = QLabel("起始编号", card)
+        start_label.setProperty("role", "form-title")
+        self.rename_start_spin = QSpinBox(card)
+        self.rename_start_spin.setRange(1, 1_000_000)
+        self.rename_start_spin.setValue(1)
+        form.addWidget(start_label, 0, 2)
+        form.addWidget(self.rename_start_spin, 0, 3)
+
+        padding_label = QLabel("编号位数", card)
+        padding_label.setProperty("role", "form-title")
+        self.rename_padding_spin = QSpinBox(card)
+        self.rename_padding_spin.setRange(1, 10)
+        self.rename_padding_spin.setValue(4)
+        form.addWidget(padding_label, 1, 0)
+        form.addWidget(self.rename_padding_spin, 1, 1)
+
+        extension_label = QLabel("仅处理扩展名", card)
+        extension_label.setProperty("role", "form-title")
+        self.rename_extension_edit = QLineEdit(card)
+        self.rename_extension_edit.setPlaceholderText("可选，例如 jpg,png（留空表示全部文件）")
+        form.addWidget(extension_label, 1, 2)
+        form.addWidget(self.rename_extension_edit, 1, 3)
+        card.add_layout(form)
+
+        self.rename_sort_row = ComboRow(
+            "排序方式",
+            [(key.value, key.label) for key in SortKey],
+            description="编号顺序由排序结果决定，默认按文件名自然排序。",
+            parent=card,
+        )
+        card.add(self.rename_sort_row)
+
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 4, 0, 0)
+        buttons.setSpacing(8)
+        self.rename_preview_button = SecondaryButton("预览", icon_name="search", parent=card)
+        self.rename_preview_button.clicked.connect(self._preview_rename)
+        buttons.addWidget(self.rename_preview_button, 0)
+        self.rename_execute_button = PrimaryButton("开始重命名", icon_name="check", parent=card)
+        self.rename_execute_button.clicked.connect(self._execute_rename)
+        self.rename_execute_button.setEnabled(False)
+        buttons.addWidget(self.rename_execute_button, 0)
+        self.rename_cancel_button = GhostButton("取消", icon_name="close", parent=card)
+        self.rename_cancel_button.clicked.connect(self._cancel_rename)
+        self.rename_cancel_button.setEnabled(False)
+        buttons.addWidget(self.rename_cancel_button, 0)
+        buttons.addStretch(1)
+        card.add_layout(buttons)
+
+        self.rename_progress_label = QLabel("", card)
+        self.rename_progress_label.setProperty("role", "hint")
+        self.rename_progress_label.setWordWrap(True)
+        card.add(self.rename_progress_label)
+        content.addWidget(card)
+
+        self.rename_section = Section(
+            "重命名预览", "原文件名 → 新文件名（预览不会修改任何文件）", icon="file", parent=self
+        )
+        self.rename_empty = EmptyState(
+            "尚未生成重命名预览",
+            "设置命名方式后点击“预览”，这里会列出每个文件的新旧名称与冲突情况。",
+            icon="file",
+        )
+        self.rename_section.set_empty_widget(self.rename_empty)
+        self.rename_summary_label = QLabel("", self)
+        self.rename_summary_label.setProperty("role", "item-meta")
+        self.rename_summary_label.setWordWrap(True)
+        self.rename_summary_label.setVisible(False)
+        self.rename_section.content.addWidget(self.rename_summary_label)
+        content.addWidget(self.rename_section)
 
     def _connect_service(self) -> None:
         library = self.context.library
         library.organize_preview_ready.connect(self._on_preview_ready)
         library.organize_finished.connect(self._on_organize_finished)
+        library.rename_preview_ready.connect(self._on_rename_preview_ready)
+        library.rename_finished.connect(self._on_rename_finished)
+        library.rename_progress.connect(self._on_rename_progress)
         library.failed.connect(self._on_failed)
         library.progress.connect(self._on_progress)
 
@@ -440,3 +582,165 @@ class OrganizerPage(BasePage):
             self.toast("该文件夹不存在。", ToastLevel.WARNING)
             return
         open_in_explorer(target)
+
+    # ------------------------------------------------------------------
+    # 批量重命名：交互
+    # ------------------------------------------------------------------
+    def _rename_mode(self) -> RenameMode:
+        return (
+            RenameMode.NUMBER_ONLY
+            if self.rename_mode_number.isChecked()
+            else RenameMode.PREFIX_NUMBER
+        )
+
+    def _rename_extensions(self) -> list[str]:
+        raw = self.rename_extension_edit.text().replace("，", ",")
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _preview_rename(self) -> None:
+        text = self.rename_path_picker.path()
+        if not text:
+            self.toast("请先选择需要重命名的文件夹。", ToastLevel.WARNING)
+            return
+        root = Path(text)
+        if not root.exists():
+            self.toast("该文件夹不存在。", ToastLevel.WARNING)
+            return
+        mode = self._rename_mode()
+        if mode is RenameMode.PREFIX_NUMBER and not self.rename_prefix_edit.text().strip():
+            self.toast("请填写名称，或改用“纯编号”模式。", ToastLevel.WARNING)
+            return
+        self.rename_preview_button.setEnabled(False)
+        self.rename_execute_button.setEnabled(False)
+        self.rename_progress_label.setText("正在生成重命名预览…")
+        self._rename_worker = self.context.library.preview_rename(
+            root,
+            mode=mode,
+            prefix=self.rename_prefix_edit.text(),
+            start=self.rename_start_spin.value(),
+            padding=self.rename_padding_spin.value(),
+            sort_key=SortKey(self.rename_sort_row.value() or "name"),
+            extensions=self._rename_extensions(),
+        )
+
+    def _on_rename_preview_ready(self, plan: RenamePlan) -> None:
+        self._rename_worker = None
+        self.rename_preview_button.setEnabled(True)
+        self._set_rename_plan(plan)
+        if plan.total == 0:
+            self.rename_progress_label.setText(
+                f"扫描了 {plan.scanned_files} 个文件，但没有需要重命名的文件。"
+            )
+            self.toast("没有找到需要重命名的文件。", ToastLevel.INFO)
+            return
+        self.rename_progress_label.setText(
+            f"预览完成：共 {plan.total} 个文件，待重命名 {plan.ready_count} 个"
+            + (f"，冲突 {plan.conflict_count} 个" if plan.conflict_count else "")
+            + (f"，名称未变化 {plan.unchanged_count} 个" if plan.unchanged_count else "")
+        )
+        if plan.conflict_count:
+            self.toast(
+                f"有 {plan.conflict_count} 个文件的目标名称已存在，已阻止执行。请调整名称或起始编号。",
+                ToastLevel.ERROR,
+            )
+        elif plan.ready_count:
+            self.toast(f"预览完成：{plan.ready_count} 个文件待重命名。", ToastLevel.SUCCESS)
+
+    def _set_rename_plan(self, plan: RenamePlan | None) -> None:
+        for widget in self._rename_rows:
+            self.rename_section.content.removeWidget(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+        self._rename_rows.clear()
+        self._rename_plan = plan
+
+        if plan is None:
+            self.rename_summary_label.setText("")
+            self.rename_summary_label.setVisible(False)
+            self.rename_empty.setVisible(True)
+            self.rename_section.set_count(0)
+            self.rename_execute_button.setEnabled(False)
+            return
+
+        self.rename_empty.setVisible(False)
+        summary = (
+            f"共 {plan.total} 个文件 · 待重命名 {plan.ready_count} 个 · "
+            f"冲突 {plan.conflict_count} 个 · 未变化 {plan.unchanged_count} 个"
+        )
+        self.rename_summary_label.setText(summary)
+        self.rename_summary_label.setVisible(True)
+
+        for old_name, new_name, status in plan.preview_rows(MAX_RENAME_ROWS):
+            row = Card(self, padding=(12, 8, 12, 8), spacing=2, hoverable=True)
+            line = QHBoxLayout()
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            original = QLabel(truncate_text(old_name, 46), row)
+            original.setProperty("role", "item-subtitle")
+            original.setToolTip(old_name)
+            line.addWidget(original, 1)
+            arrow = QLabel("→", row)
+            arrow.setProperty("role", "item-meta")
+            line.addWidget(arrow, 0)
+            changed = QLabel(truncate_text(new_name, 46), row)
+            changed.setProperty("role", "item-title")
+            changed.setToolTip(new_name)
+            line.addWidget(changed, 1)
+            line.addWidget(StatusBadge(status.label, RENAME_STATUS_TONES.get(status, "neutral")), 0)
+            row.add_layout(line)
+            self.rename_section.content.addWidget(row)
+            self._rename_rows.append(row)
+        self.rename_section.set_count(plan.total)
+        self.rename_execute_button.setEnabled(plan.can_execute)
+
+    def _execute_rename(self) -> None:
+        plan = self._rename_plan
+        if plan is None or not plan.can_execute:
+            self.toast("请先生成可执行的重命名预览。", ToastLevel.WARNING)
+            return
+        if not confirm(
+            self,
+            "确认批量重命名",
+            f"将重命名 {plan.ready_count} 个文件：\n"
+            f"目录：{plan.root}\n"
+            f"目标名称示例：{plan.ready_actions[0].target.name}\n\n"
+            "同名文件不会被覆盖；执行后可在历史记录中查看结果。",
+            confirm_text="开始重命名",
+            danger=True,
+        ):
+            return
+        self.rename_execute_button.setEnabled(False)
+        self.rename_preview_button.setEnabled(False)
+        self.rename_cancel_button.setEnabled(True)
+        self.rename_progress_label.setText("正在重命名…")
+        self._rename_worker = self.context.library.execute_rename(plan)
+
+    def _cancel_rename(self) -> None:
+        if self._rename_worker is not None:
+            self._rename_worker.cancel()
+            self.rename_progress_label.setText("正在取消…")
+            return
+        self._set_rename_plan(None)
+        self.rename_progress_label.setText("已清除重命名预览。")
+
+    def _on_rename_progress(self, index: int, total: int, path: str) -> None:
+        self.rename_progress_label.setText(
+            f"正在重命名 {index} / {total} · {truncate_text(Path(path).name, 50)}"
+        )
+
+    def _on_rename_finished(self, result) -> None:  # type: ignore[no-untyped-def]
+        self._rename_worker = None
+        self.rename_preview_button.setEnabled(True)
+        self.rename_cancel_button.setEnabled(False)
+        self.rename_execute_button.setEnabled(False)
+        self.rename_progress_label.setText(f"重命名完成：{result.summary}")
+        self._set_rename_plan(None)
+        level = ToastLevel.SUCCESS if result.success else ToastLevel.WARNING
+        self.toast(f"重命名完成：{result.summary}", level)
+        if result.errors:
+            show_result_details(
+                self,
+                "部分文件重命名失败",
+                f"成功 {result.renamed} 个，失败 {result.failed} 个，跳过 {result.skipped} 个",
+                [(path.name, reason) for path, reason in result.errors],
+            )

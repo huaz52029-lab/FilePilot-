@@ -34,8 +34,10 @@ class DownloadsPage(BasePage):
         self._pending_url = ""
         self._probe_dialog: ProbeDialog | None = None
         self._active_cards: list[DownloadCard] = []
+        self._paused_cards: list[DownloadCard] = []
         self._queued_cards: list[DownloadCard] = []
         self._completed_cards: list[DownloadCard] = []
+        self._failed_cards: list[DownloadCard] = []
         self._build()
         self._connect_service()
 
@@ -70,13 +72,22 @@ class DownloadsPage(BasePage):
 
         self.active_section = Section("正在下载", "实时速度与剩余时间", icon="download", parent=self)
         self.active_empty = EmptyState(
-            "暂无正在下载的任务", "粘贴链接开始下载，或到队列中继续暂停的任务。", icon="download"
+            "暂无正在下载的任务", "粘贴链接开始下载，或到“已暂停”中继续任务。", icon="download"
         )
         self.active_section.set_empty_widget(self.active_empty)
         content.addWidget(self.active_section)
 
-        self.queued_section = Section("队列", "等待可用并发槽位", icon="clock", parent=self)
-        self.queued_empty = EmptyState("队列为空", "新任务会自动进入队列并依次开始。", icon="clock")
+        self.paused_section = Section(
+            "已暂停", "已暂停的任务会一直保留，可随时继续（支持断点续传）", icon="pause", parent=self
+        )
+        self.paused_empty = EmptyState(
+            "没有暂停的任务", "在下载中的任务上点击“暂停”，任务会移动到这里并保留进度。", icon="pause"
+        )
+        self.paused_section.set_empty_widget(self.paused_empty)
+        content.addWidget(self.paused_section)
+
+        self.queued_section = Section("等待中", "等待可用并发槽位", icon="clock", parent=self)
+        self.queued_empty = EmptyState("没有等待中的任务", "新任务会自动进入队列并依次开始。", icon="clock")
         self.queued_section.set_empty_widget(self.queued_empty)
         content.addWidget(self.queued_section)
 
@@ -88,6 +99,13 @@ class DownloadsPage(BasePage):
         )
         self.completed_section.set_empty_widget(self.completed_empty)
         content.addWidget(self.completed_section)
+
+        self.failed_section = Section(
+            "失败 / 已取消", "可重试或删除记录（文件不会被删除）", icon="alert", parent=self
+        )
+        self.failed_empty = EmptyState("没有失败的任务", "出现错误的任务会显示在这里。", icon="alert")
+        self.failed_section.set_empty_widget(self.failed_empty)
+        content.addWidget(self.failed_section)
         content.addStretch(1)
 
         stats_card = Card(padding=(18, 14, 18, 14), spacing=8)
@@ -142,6 +160,12 @@ class DownloadsPage(BasePage):
             show_speed=True,
         )
         self._rebuild_section(
+            self.paused_section,
+            self.downloads.paused_tasks(),
+            self._paused_cards,
+            show_speed=False,
+        )
+        self._rebuild_section(
             self.queued_section,
             self.downloads.queued_tasks(),
             self._queued_cards,
@@ -152,6 +176,12 @@ class DownloadsPage(BasePage):
             self.completed_section,
             completed,
             self._completed_cards,
+            show_speed=False,
+        )
+        self._rebuild_section(
+            self.failed_section,
+            self.downloads.failed_tasks()[:MAX_COMPLETED_CARDS],
+            self._failed_cards,
             show_speed=False,
         )
 
@@ -264,7 +294,7 @@ class DownloadsPage(BasePage):
             self.report_error(exc, title="继续失败")
 
     def _clear_finished(self) -> None:
-        finished = self.downloads.completed_tasks()
+        finished = self.downloads.finished_tasks()
         if not finished:
             self.toast("没有可清理的任务记录。", ToastLevel.INFO)
             return

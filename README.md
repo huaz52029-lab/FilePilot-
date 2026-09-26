@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.9%2B-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)](#)
-[![Version](https://img.shields.io/badge/Version-v0.1.0-3B82F6.svg)](#项目版本)
+[![Version](https://img.shields.io/badge/Version-v0.1.1-3B82F6.svg)](#项目版本)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 - **项目地址**：<https://github.com/huaz52029-lab/FilePilot->
@@ -25,13 +25,13 @@
 ```text
 Windows x64
     ↓
-FilePilot-v0.1.0-Windows-x64.exe
+FilePilot-v0.1.1-Windows-x64.exe
 ```
 
 | 文件 | 说明 |
 | --- | --- |
-| [FilePilot-v0.1.0-Windows-x64.exe](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.0/FilePilot-v0.1.0-Windows-x64.exe) | 单文件可执行程序（推荐，双击即用） |
-| [FilePilot-v0.1.0-Windows-x64.zip](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.0/FilePilot-v0.1.0-Windows-x64.zip) | 便携压缩包（含 README 与 LICENSE） |
+| [FilePilot-v0.1.1-Windows-x64.exe](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.1/FilePilot-v0.1.1-Windows-x64.exe) | 单文件可执行程序（推荐，双击即用） |
+| [FilePilot-v0.1.1-Windows-x64.zip](https://github.com/huaz52029-lab/FilePilot-/releases/download/v0.1.1/FilePilot-v0.1.1-Windows-x64.zip) | 便携压缩包（含 README 与 LICENSE） |
 
 - 系统要求：Windows 10 / 11（x64）
 - 数据库、配置与日志写入 `%APPDATA%\FilePilot`，不会写入程序所在目录
@@ -71,6 +71,7 @@ FilePilot-v0.1.0-Windows-x64.exe
 | 多连接下载 | 依据文件大小与服务器能力自动选择 1–16 个连接，并支持自适应调整 |
 | 断点续传 | `*.fp.part/meta.json` + SQLite 双写，重启后校验 ETag / 大小再继续 |
 | 自动重试 | 指数退避（1s→2s→4s→8s，最多 5 次），仅重试可恢复错误 |
+| 临时地址失效恢复 | 检测到签名 / 临时下载地址失效（如 GitHub Release 的 HTTP 618 `jwt:expired`）时，保留已下载数据、重新获取下载地址并按 Range 断点续传 |
 | 智能回退 | 服务器忽略 Range 时自动切换稳定单连接，任务不失败 |
 | 下载队列 | 并发任务上限可配置（默认 3），支持暂停 / 继续 / 取消 / 重试 |
 | SHA-256 校验 | 完成后自动计算校验值，可与预期值比对 |
@@ -78,6 +79,8 @@ FilePilot-v0.1.0-Windows-x64.exe
 | 重复文件检测 | 先比大小再算 SHA-256，默认只移动到“重复文件”文件夹 |
 | 空间分析 | 磁盘总览、目录下钻、最大文件与文件类型分布 |
 | 下载历史 | 下载 / 整理 / 校验 / 文件操作全记录，支持搜索与清空 |
+| 批量重命名 | 按文件名 / 时间 / 大小排序后自动编号（名称 + 编号 或 纯编号），执行前必须预览 |
+| 重复文件一键处理 | 一键移动全部重复项，跨磁盘自动使用“复制 → 校验 → 删除”，并显示成功 / 失败明细 |
 | 现代化 Windows UI | 深色优先的 Windows 11 风格中文界面，圆角卡片与统一组件 |
 
 > 下载速度取决于你的网络、服务器带宽、CDN、链路质量与服务器限速策略。
@@ -432,6 +435,17 @@ A：不会自动删除。整理只移动；重复文件默认移动到“重复�
 **Q：日志在哪里？**
 A：`%APPDATA%\FilePilot\logs\`，或在“设置 → 数据与日志”中点击“打开日志目录”。
 
+**Q：从 GitHub Release 下载大文件时出现 HTTP 618 / `jwt:expired` 怎么办？**
+A：这是 GitHub Release 的临时签名地址（signed URL）过期导致的，FilePilot 会自动处理：
+保留已下载的数据 → 重新向**原始 URL** 获取新的下载地址 → 按 `Range` 从断点继续下载，
+界面会显示“下载连接已失效，正在重新建立连接……”。
+该机制对所有使用临时签名地址的 CDN / 文件服务器同样生效，并非只针对 GitHub。
+如果服务器不允许继续 Range，程序会明确提示需要重新下载，而不会静默失败。
+
+**Q：为什么文件从 E: 移动到 C: 会很慢？**
+A：跨磁盘无法直接重命名，必须复制数据。FilePilot 采用“复制 → 校验（大小 / 可选 SHA-256）→
+删除源文件”的安全顺序，并在界面上显示进度；复制或校验失败时**源文件一定保留**。
+
 ---
 
 ## 已知限制
@@ -441,6 +455,8 @@ A：`%APPDATA%\FilePilot\logs\`，或在“设置 → 数据与日志”中点�
 - 断点续传依赖服务器提供 `ETag` 或 `Last-Modified` 以校验文件是否变化；
 - 部分需要登录 / 携带 Cookie 的直链无法直接下载（会给出明确提示）；
 - 跨分区自动归档会退化为“复制 + 删除源文件”，大文件耗时较长；
+- 临时下载地址失效后，FilePilot 会尝试重新建立连接并断点续传；
+  **如果服务器 / CDN 不允许继续 Range**，将提示需要重新下载（不会静默失败）；
 - 当前界面语言为简体中文。
 
 ---
@@ -458,16 +474,42 @@ A：`%APPDATA%\FilePilot\logs\`，或在“设置 → 数据与日志”中点�
 
 ---
 
+## 更新日志
+
+### v0.1.1
+
+新增：
+
+- 批量文件重命名（按 文件名 / 修改时间 / 创建时间 / 文件大小 排序后自动编号）
+- 文件自动编号（`照片0001.jpg` 或纯编号 `0001.jpg`，自动保留原扩展名）
+- 重复文件“一键全部移动”（后台执行、实时进度、成功 / 失败明细）
+
+修复：
+
+- 修复暂停下载任务从下载列表消失的问题（下载页新增“已暂停”分区）
+- 修复跨磁盘移动文件失败的问题（`WinError 17`：同盘重命名，跨盘 `复制 → 校验 → 删除`）
+- 改进 GitHub Release / 临时下载地址失效后的恢复机制（重新建立连接 + 断点续传）
+- 改进重复文件批量移动（逐个统计成功与失败，单个失败不影响整体）
+- 改进下载任务状态持久化（暂停状态落库，重启后仍显示为已暂停）
+
+### v0.1.0
+
+首个可用版本：下载引擎（探测 / 分段 / 断点续传 / 重试 / 回退 / 队列 / SHA-256）、
+文件整理、重复文件检测、空间分析、历史记录与现代化中文界面。
+完整记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
 ## 项目版本
 
-当前版本：**v0.1.0**
+当前版本：**v0.1.1**
 
 | 位置 | 值 |
 | --- | --- |
-| 软件版本（`app/core/common/constants.py` 的 `APP_VERSION`） | `0.1.0` |
-| 打包元数据（`pyproject.toml` 的 `project.version`） | `0.1.0` |
-| 关于页面 / 设置页面 | 读取 `APP_VERSION`，显示 `v0.1.0` |
-| Windows EXE 版本资源 | 打包时写入 `0.1.0` |
+| 软件版本（`app/core/common/constants.py` 的 `APP_VERSION`） | `0.1.1` |
+| 打包元数据（`pyproject.toml` 的 `project.version`） | `0.1.1` |
+| 关于页面 / 设置页面 | 读取 `APP_VERSION`，显示 `v0.1.1` |
+| Windows EXE 版本资源 | 打包时写入 `0.1.1` |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
 ---

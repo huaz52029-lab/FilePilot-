@@ -8,20 +8,58 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.common.constants import DUPLICATE_MIN_FILE_SIZE, DUPLICATE_TARGET_DIRNAME
-from app.core.common.exceptions import FileOperationError, describe_os_error
-from app.core.common.helpers import format_bytes, unique_path
+from app.core.common.exceptions import FileOperationError
+from app.core.common.helpers import format_bytes
 from app.core.common.logger import get_logger
 from app.core.files.hasher import compute_sha256
 from app.core.files.models import DuplicateGroup, DuplicateScanResult, FileEntry
+from app.core.files.mover import move_file
 from app.core.files.scanner import iter_file_entries
 
 _log = get_logger("files.duplicate")
 
 CancelCheck = Callable[[], bool]
 ProgressCallback = Callable[[str], None]
+MoveProgressCallback = Callable[[int, int, Path], None]  # (已完成数量, 总数, 当前文件)
+
+
+@dataclass(slots=True)
+class DuplicateMoveResult:
+    """重复文件批量移动的结果。"""
+
+    moved: int = 0
+    failed: int = 0
+    skipped: int = 0
+    bytes_moved: int = 0
+    cross_volume: int = 0
+    errors: list[tuple[Path, str]] = field(default_factory=list)
+    cancelled: bool = False
+
+    @property
+    def total(self) -> int:
+        return self.moved + self.failed + self.skipped
+
+    @property
+    def success(self) -> bool:
+        return self.failed == 0 and not self.cancelled
+
+    @property
+    def summary(self) -> str:
+        """人类可读的汇总文本。"""
+        parts = [f"成功 {self.moved} 个"]
+        if self.failed:
+            parts.append(f"失败 {self.failed} 个")
+        if self.skipped:
+            parts.append(f"跳过 {self.skipped} 个")
+        if self.cross_volume:
+            parts.append(f"其中跨盘复制 {self.cross_volume} 个")
+        if self.cancelled:
+            parts.append("已取消")
+        return "，".join(parts)
 
 
 def find_duplicates(
@@ -88,34 +126,55 @@ def move_to_duplicate_folder(
     *,
     target_dir: Path | str,
     should_cancel: CancelCheck | None = None,
-) -> tuple[int, list[str]]:
+    on_progress: MoveProgressCallback | None = None,
+    verify_hash: bool = False,
+) -> DuplicateMoveResult:
     """把指定文件移动到“重复文件”文件夹。
 
-    返回 ``(移动成功数量, 错误信息列表)``。
+    * 同盘使用重命名，跨盘自动使用 复制 → 校验 → 删除；
+    * 单个文件失败不会中断整体流程，失败原因会记录在结果中。
     """
     destination_root = Path(target_dir)
     cancelled = should_cancel or (lambda: False)
-    moved = 0
-    errors: list[str] = []
-    for path in paths:
+    items = [Path(path) for path in paths]
+    result = DuplicateMoveResult()
+    index = 0
+    for index, source in enumerate(items, start=1):
         if cancelled():
+            result.cancelled = True
             break
-        source = Path(path)
+        if on_progress is not None:
+            on_progress(index - 1, len(items), source)
         if not source.exists():
-            errors.append(f"{source.name}：文件不存在")
+            result.skipped += 1
+            result.errors.append((source, "文件不存在或已被移动"))
             continue
         destination_dir = destination_root / source.parent.name
         try:
-            destination_dir.mkdir(parents=True, exist_ok=True)
-            target = unique_path(destination_dir / source.name)
-            source.rename(target)
-        except OSError as exc:
-            message = describe_os_error(exc)
-            errors.append(f"{source.name}：{message}")
-            _log.warning("移动重复文件失败 %s：%s", source, exc)
+            outcome = move_file(
+                source,
+                destination_dir,
+                verify_hash=verify_hash,
+                should_cancel=cancelled,
+            )
+        except FileOperationError as exc:
+            result.failed += 1
+            result.errors.append((source, exc.user_message))
+            _log.warning("移动重复文件失败 %s：%s", source, exc.detail or exc.message)
             continue
-        moved += 1
-    return moved, errors
+        except Exception as exc:  # noqa: BLE001 - 单个文件失败不影响其它文件
+            result.failed += 1
+            result.errors.append((source, str(exc)))
+            _log.warning("移动重复文件异常 %s：%s", source, exc)
+            continue
+        result.moved += 1
+        result.bytes_moved += outcome.bytes_moved
+        if outcome.cross_volume:
+            result.cross_volume += 1
+    if on_progress is not None:
+        on_progress(index, len(items), items[-1] if items else destination_root)
+    _log.info("重复文件移动完成：%s", result.summary)
+    return result
 
 
 def duplicate_folder(root: Path | str) -> Path:

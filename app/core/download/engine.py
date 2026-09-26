@@ -184,14 +184,17 @@ class DownloadEngine:
     async def load_unfinished(self) -> list[DownloadTask]:
         """载入未完成任务（程序启动时调用）。
 
-        重启后没有任何任务在运行，因此运行态会被标记为“已暂停”。
+        重启后没有任何任务在运行，因此**运行态**（下载中/重试中/分析中等）
+        会被标记为“已暂停”并打上 ``interrupted`` 标记；
+        而**用户主动暂停**的任务保持“已暂停”且不会被自动恢复。
         """
         tasks = self._repo.list_unfinished()
         restored: list[DownloadTask] = []
         for task in tasks:
             if task.status.is_active:
                 task.status = DownloadStatus.PAUSED
-                task.notice = "程序重启，任务已暂停，可继续下载（支持断点续传）"
+                task.interrupted = True
+                task.notice = "程序退出时任务被中断，已暂停；可继续下载（支持断点续传）"
             self._tasks[task.task_id] = task
             restored.append(task)
         return restored

@@ -21,6 +21,19 @@ class RangeUnsupported(DownloadInterrupt):
     """服务器实际不支持 Range，需要回退到单连接。"""
 
 
+class UrlExpiredError(Exception):
+    """临时下载地址已失效（HTTP 618 / jwt:expired / 签名 URL 过期）。
+
+    这类错误不是下载失败：重新向**原始 URL** 请求一次即可拿到新的临时地址，
+    然后带着 ``Range`` 从已下载位置继续。
+    """
+
+    def __init__(self, status: int, detail: str = "") -> None:
+        super().__init__(f"临时下载地址失效（HTTP {status}）")
+        self.status = status
+        self.detail = detail
+
+
 class DownloadControl:
     """任务控制标记（可在任意线程设置，协程内轮询检查）。"""
 

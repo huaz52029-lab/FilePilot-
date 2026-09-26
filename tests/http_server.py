@@ -9,6 +9,8 @@
 * ``redirect``    302 跳转到目标文件
 * ``missing``     404
 * ``flaky``       连续返回若干次 503 后恢复正常
+* ``signed``      模拟 GitHub Release 的临时签名地址：未带令牌的原始 URL 返回 302，
+                  令牌下载若干次后过期并返回 ``403 jwt:expired``（用于验证重新建立连接）
 * ``unknown``     不返回 Content-Length（分块/连接关闭），且不支持 Range
 * ``slow``        按小块慢速发送，便于测试暂停 / 取消
 """
@@ -20,7 +22,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
@@ -35,6 +37,10 @@ class ServerState:
     etags: dict[str, str] = field(default_factory=dict)
     modified: dict[str, str] = field(default_factory=dict)
     requests: list[tuple[str, str | None]] = field(default_factory=list)
+    signed_generation: dict[str, int] = field(default_factory=dict)
+    signed_remaining: dict[str, int] = field(default_factory=dict)
+    signed_ttl: dict[str, int] = field(default_factory=dict)
+    signed_redirects: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def record(self, path: str, range_header: str | None) -> None:
@@ -53,6 +59,29 @@ class ServerState:
                 return False
             self.failures[path] = remaining - 1
             return True
+
+    def signed_token(self, path: str) -> int:
+        """返回当前有效的临时令牌（重新请求原始 URL 会拿到最新令牌）。"""
+        with self.lock:
+            self.signed_redirects += 1
+            return self.signed_generation.get(path, 1)
+
+    def consume_signed_token(self, path: str) -> bool:
+        """消耗一次令牌额度；额度用尽返回 False 表示令牌失效。"""
+        with self.lock:
+            remaining = self.signed_remaining.get(path, 0)
+            if remaining <= 0:
+                return False
+            self.signed_remaining[path] = remaining - 1
+            return True
+
+    def expire_signed_token(self, path: str) -> int:
+        """让当前令牌失效并生成新令牌。"""
+        with self.lock:
+            generation = self.signed_generation.get(path, 1) + 1
+            self.signed_generation[path] = generation
+            self.signed_remaining[path] = self.signed_ttl.get(path, 1)
+            return generation
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -101,6 +130,36 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+
+        if mode == "signed":
+            query = parse_qs(urlparse(self.path).query)
+            token = (query.get("token") or [None])[0]
+            current = self.state.signed_generation.get(path, 1)
+            if token is None:
+                # 未带令牌：返回新的临时地址（等价于 GitHub Release 的 302 跳转）
+                self.send_response(302)
+                self.send_header("Location", f"{path}?token={self.state.signed_token(path)}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if token != str(current):
+                # 令牌已过期：这正是 GitHub 返回 618 jwt:expired 的场景
+                self._send(403, body=b"jwt:expired: token is no longer valid")
+                return
+            is_real_download = bool(
+                self.command == "GET"
+                and range_header
+                and not range_header.replace(" ", "").endswith("-0")
+            )
+            if is_real_download:
+                if not self.state.consume_signed_token(path):
+                    self.state.expire_signed_token(path)
+                    self._send(403, body=b"jwt:expired: token expired during download")
+                    return
+                if self.state.signed_remaining.get(path, 0) <= 0:
+                    # 本次请求成功后令牌立即失效，模拟短时效签名
+                    self.state.expire_signed_token(path)
+            mode = "range"
 
         if mode == "flaky-download":
             # 只对真正的下载请求注入故障：探测用的 bytes=0-0 与 HEAD 正常放行
@@ -250,6 +309,29 @@ class TestHTTPServer(ThreadingHTTPServer):
         self.state.files[path] = b""
         self.state.modes[path] = "redirect"
         self.state.modes[f"{path}:target"] = target
+        return self.url(path)
+
+    def register_signed(
+        self,
+        path: str,
+        payload: bytes,
+        *,
+        token_ttl: int = 2,
+        etag: str | None = None,
+    ) -> str:
+        """注册“临时签名地址”模式，返回**稳定的原始 URL**。
+
+        原始 URL 每次请求都会 302 到一个带 ``token`` 的临时地址；
+        令牌的下载额度用尽后返回 ``403 jwt:expired``，
+        与 GitHub Release 的 ``618 jwt:expired`` 行为一致。
+        """
+        self.state.files[path] = payload
+        self.state.modes[path] = "signed"
+        self.state.signed_generation[path] = 1
+        self.state.signed_ttl[path] = max(1, token_ttl)
+        self.state.signed_remaining[path] = max(1, token_ttl)
+        if etag:
+            self.state.etags[path] = etag
         return self.url(path)
 
     def url(self, path: str) -> str:

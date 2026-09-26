@@ -9,13 +9,11 @@
 
 from __future__ import annotations
 
-import shutil
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from app.core.common.exceptions import FileOperationError, describe_os_error
-from app.core.common.helpers import unique_path
+from app.core.common.exceptions import FileOperationError
 from app.core.common.logger import get_logger
 from app.core.files.categories import FileCategory, categorize_path, category_folder
 from app.core.files.models import (
@@ -24,6 +22,7 @@ from app.core.files.models import (
     OrganizePlan,
     OrganizeResult,
 )
+from app.core.files.mover import move_file as move_path
 from app.core.files.rules import OrganizeRule
 from app.core.files.scanner import iter_file_entries
 
@@ -212,14 +211,11 @@ def execute_plan(
 
 
 def _move_file(source: Path, target: Path) -> Path:
-    """移动单个文件；目标存在时自动改名，绝不覆盖。"""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    destination = unique_path(target) if target.exists() else target
-    try:
-        shutil.move(str(source), str(destination))
-    except OSError as exc:
-        raise FileOperationError(describe_os_error(exc), detail=f"{source} → {destination}") from exc
-    return destination
+    """移动单个文件：同盘重命名，跨盘自动走 复制 → 校验 → 删除。
+
+    目标已存在时自动改名（``名称 (1).扩展名``），绝不覆盖。
+    """
+    return move_path(source, target.parent).target
 
 
 def archive_download(

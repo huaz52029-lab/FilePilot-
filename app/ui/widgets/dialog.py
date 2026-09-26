@@ -170,3 +170,30 @@ def show_warning(parent: QWidget | None, title: str, text: str) -> None:
 def show_error(parent: QWidget | None, title: str, text: str) -> None:
     """错误提示（只展示自然语言，不展示 traceback）。"""
     _message_dialog(parent, title, text, icon="alert", tone="error")
+
+
+def show_result_details(
+    parent: QWidget | None,
+    title: str,
+    summary: str,
+    items: list[tuple[str, str]],
+    *,
+    max_height: int = 320,
+) -> None:
+    """展示“成功 N / 失败 M”明细列表（每条为 (名称, 原因)）。"""
+    dialog = AppDialog(title, subtitle=summary, width=560, parent=parent)
+    container = QWidget(dialog)
+    layout = QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    for name, reason in items[:500]:
+        label = QLabel(f"{name}：{reason}", container)
+        label.setProperty("role", "detail-value")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+    layout.addStretch(1)
+    dialog.add_scrollable(container, max_height=max_height)
+    close_button = SecondaryButton("关闭", parent=dialog)
+    close_button.clicked.connect(dialog.accept)
+    dialog.add_button(close_button)
+    dialog.exec()

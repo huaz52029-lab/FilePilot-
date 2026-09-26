@@ -259,6 +259,9 @@ class DownloadTask:
     updated_at: float = field(default_factory=time.time)
     completed_at: float | None = None
     probe: ProbeResult | None = None
+    #: 运行期标记：任务因程序退出而中断（不会写入数据库）。
+    #: 用于区分“用户手动暂停”和“程序崩溃/退出导致的暂停”。
+    interrupted: bool = False
 
     # -- 派生属性 ---------------------------------------------------------
     @property

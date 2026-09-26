@@ -18,13 +18,15 @@ from PySide6.QtWidgets import (
 from app.core.common.helpers import format_bytes, open_in_explorer, truncate_text
 from app.core.files.duplicate import duplicate_folder
 from app.core.files.models import DuplicateGroup, DuplicateScanResult
+from app.core.files.mover import same_volume
 from app.ui.navigation import PageId
 from app.ui.pages.base_page import BasePage
 from app.ui.widgets.badge import StatusBadge
 from app.ui.widgets.buttons import GhostButton, PrimaryButton, SecondaryButton
 from app.ui.widgets.cards import Card, SectionHeader
-from app.ui.widgets.dialog import confirm
+from app.ui.widgets.dialog import confirm, show_result_details
 from app.ui.widgets.empty_state import EmptyState
+from app.ui.widgets.progress_bar import ProgressBar
 from app.ui.widgets.section import Section
 from app.ui.widgets.toast import ToastLevel
 
@@ -51,6 +53,10 @@ class DuplicatesPage(BasePage):
         duplicate_folder_button = GhostButton("打开重复文件夹", icon_name="folder-open", parent=self)
         duplicate_folder_button.clicked.connect(self._open_duplicate_folder)
         self.add_action(duplicate_folder_button)
+        self.move_all_button = PrimaryButton("全部移动", icon_name="folder", parent=self)
+        self.move_all_button.clicked.connect(self._move_all_duplicates)
+        self.move_all_button.setEnabled(False)
+        self.add_action(self.move_all_button)
 
         content = self.add_scrollable()
 
@@ -90,6 +96,9 @@ class DuplicatesPage(BasePage):
         self.progress_label.setProperty("role", "hint")
         self.progress_label.setWordWrap(True)
         roots_card.add(self.progress_label)
+        self.move_progress = ProgressBar(roots_card, height=8)
+        self.move_progress.setVisible(False)
+        roots_card.add(self.move_progress)
         content.addWidget(roots_card)
 
         summary_card = Card(padding=(20, 16, 20, 16), spacing=8)
@@ -134,6 +143,8 @@ class DuplicatesPage(BasePage):
         library = self.context.library
         library.duplicates_ready.connect(self._on_scan_ready)
         library.duplicates_moved.connect(self._on_duplicates_moved)
+        library.duplicates_move_progress.connect(self._on_move_progress)
+        library.duplicates_move_finished.connect(self._on_move_finished)
         library.failed.connect(self._on_failed)
         library.progress.connect(self._on_progress)
 
@@ -214,6 +225,7 @@ class DuplicatesPage(BasePage):
                 f"计算 {result.hashed_files} 个哈希，耗时 {result.duration:.1f} 秒。"
             )
         self._render_groups()
+        self.move_all_button.setEnabled(bool(result.groups))
         if result.group_count:
             self.toast(
                 f"发现 {result.group_count} 组重复文件，可回收 {format_bytes(result.wasted_bytes)}",
@@ -226,6 +238,7 @@ class DuplicatesPage(BasePage):
         self._worker = None
         self.scan_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
+        self._end_move()
         self.progress_label.setText("")
         self.toast(message, ToastLevel.ERROR)
 
@@ -328,8 +341,79 @@ class DuplicatesPage(BasePage):
             confirm_text="移动",
         ):
             return
-        self.progress_label.setText("正在移动重复文件…")
+        self._begin_move()
         self._worker = self.context.library.move_duplicates(duplicates, target_dir=target)
+
+    def _move_all_duplicates(self) -> None:
+        """把所有重复组中“除保留文件外”的文件一次性移动。"""
+        if self._result is None or not self._result.groups:
+            self.toast("请先检测重复文件。", ToastLevel.WARNING)
+            return
+        paths = [path for group in self._result.groups for path in group.files[1:]]
+        if not paths:
+            self.toast("没有需要移动的重复文件。", ToastLevel.INFO)
+            return
+        target = duplicate_folder(self.settings.download_dir)
+        cross_volume = sum(1 for path in paths if not same_volume(path, target))
+        note = (
+            f"\n其中 {cross_volume} 个文件位于其它磁盘，将自动使用：\n复制 → 校验 → 删除\n"
+            if cross_volume
+            else "\n跨磁盘文件将自动使用：复制 → 校验 → 删除\n"
+        )
+        if not confirm(
+            self,
+            "确认移动全部重复文件？",
+            f"将移动：\n{len(paths)} 个文件\n\n目标目录：\n{target}\n"
+            f"{note}\n每组默认保留第一份，不会删除任何文件。",
+            confirm_text="确认全部移动",
+        ):
+            return
+        self._begin_move()
+        self._worker = self.context.library.move_duplicates(paths, target_dir=target)
+
+    def _begin_move(self) -> None:
+        """进入移动状态：禁用按钮并显示总体进度。"""
+        self.move_all_button.setEnabled(False)
+        self.scan_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.move_progress.set_value(0, animated=False)
+        self.move_progress.setVisible(True)
+        self.progress_label.setText("正在移动重复文件…")
+
+    def _end_move(self) -> None:
+        self.move_progress.setVisible(False)
+        self.move_progress.set_value(0, animated=False)
+        self.scan_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        groups = self._result.groups if self._result else []
+        self.move_all_button.setEnabled(bool(groups))
+
+    def _on_move_progress(self, index: int, total: int, path: str) -> None:
+        percent = (index / total * 100.0) if total else 0.0
+        self.move_progress.set_value(percent)
+        self.progress_label.setText(
+            f"正在移动 {index} / {total} · {truncate_text(Path(path).name, 48)}"
+        )
+
+    def _on_move_finished(self, result) -> None:  # type: ignore[no-untyped-def]
+        """移动结束：显示成功 / 失败统计与失败明细。"""
+        self._worker = None
+        self._end_move()
+        summary = getattr(result, "summary", "")
+        self.progress_label.setText(f"移动完成：{summary}")
+        failed = getattr(result, "failed", 0)
+        errors = getattr(result, "errors", [])
+        self.toast(
+            f"移动完成：{summary}",
+            ToastLevel.SUCCESS if failed == 0 else ToastLevel.WARNING,
+        )
+        if errors:
+            show_result_details(
+                self,
+                "部分重复文件移动失败",
+                summary,
+                [(path.name, reason) for path, reason in errors],
+            )
 
     def _open_duplicate_folder(self) -> None:
         target = duplicate_folder(self.settings.download_dir)

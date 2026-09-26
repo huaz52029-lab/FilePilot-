@@ -46,7 +46,7 @@ from app.core.download.models import (
     ProbeResult,
     SegmentState,
 )
-from app.core.download.probe import suggest_connections
+from app.core.download.probe import probe_url, suggest_connections
 from app.core.download.resume import PartMeta, PartStore
 from app.core.download.retry import RetryPolicy
 from app.core.download.segment import SegmentAllocator, SegmentWorker, cancel_pending
@@ -136,8 +136,6 @@ class TaskRunner:
     # 探测与准备
     # ------------------------------------------------------------------
     async def _probe_url(self) -> ProbeResult:
-        from app.core.download.probe import probe_url
-
         return await probe_url(
             self._session,
             self._task.url,
@@ -223,6 +221,8 @@ class TaskRunner:
             base_headers=build_headers(),
             on_retry=self._on_retry,
             use_range=bool(task.supports_range),
+            on_url_expired=self._refresh_download_url,
+            url_is_redirected=bool(task.final_url) and task.final_url != task.url,
         )
         await self._persist(force=True)
         self._emit()
@@ -425,6 +425,43 @@ class TaskRunner:
         task.notice = message
         _log.warning("任务 %s %s：%s", task.task_id, message, exc)
         self._emit()
+
+    async def _refresh_download_url(self) -> str:
+        """临时下载地址失效后，重新向**原始 URL** 获取新的下载地址。
+
+        GitHub Release / 各类签名 CDN 会在下载过程中让临时地址过期
+        （HTTP 618 ``jwt:expired`` 等）。此时保留已下载数据，
+        只用原始 URL 重新获取新地址，然后按 Range 从断点继续下载。
+        """
+        task = self._task
+        notice = "下载连接已失效，正在重新建立连接……"
+        task.status = DownloadStatus.RETRYING
+        task.notice = notice
+        _log.info("任务 %s：%s（使用原始 URL 重新探测）", task.task_id, notice)
+        self._callbacks.notice("warning", f"{task.file_name}：{notice}")
+        self._emit()
+
+        probe = await probe_url(
+            self._session,
+            task.url,  # 始终使用原始 URL，绝不复用已失效的临时地址
+            requested_connections=task.requested_connections,
+        )
+        task.final_url = probe.final_url or task.url
+        task.content_type = probe.content_type or task.content_type
+        task.etag = probe.etag or task.etag
+        task.last_modified = probe.last_modified or task.last_modified
+        task.supports_range = probe.supports_range
+        task.can_resume = probe.can_resume
+        if probe.total_size > 0:
+            task.total_size = probe.total_size
+        self._probe = probe
+        worker = self._worker
+        if worker is not None:
+            worker.use_range = bool(task.supports_range)
+        await self._persist(force=True)
+        self._emit()
+        _log.info("任务 %s：已获取新的下载地址，继续断点续传", task.task_id)
+        return task.final_url
 
     # ------------------------------------------------------------------
     # 收尾

@@ -12,7 +12,7 @@ from typing import Final
 # ---------------------------------------------------------------------------
 APP_NAME: Final[str] = "FilePilot"
 APP_TAGLINE: Final[str] = "现代 Windows 文件管理与智能下载工具"
-APP_VERSION: Final[str] = "0.1.0"
+APP_VERSION: Final[str] = "0.1.1"
 APP_AUTHOR: Final[str] = "FilePilot Contributors"
 APP_LICENSE: Final[str] = "MIT"
 #: 项目唯一官方地址（代码、About / 设置页面、打包元数据、User-Agent 均引用此处）
